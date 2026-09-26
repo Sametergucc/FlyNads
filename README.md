@@ -48,7 +48,7 @@ Prediction markets are often abstract dashboards disconnected from any real-worl
 FlyOrDie is a working prediction game where **the live market event, the decision process, and the on-chain bet share the same screen**.
 
 - A fruit fly watches the real-time BTC-USD market and autonomously opens a long or short paper trade.
-- Players predict whether the fly's trade will be **profitable (Epic Gains)** or **liquidated (Rekt)** before the position closes.
+- Players predict whether the fly's trade will be **profitable (Epic Gains)** or **liquidated (Rekt)** before the position closes. A disclosed 0.05% simulated round-trip cost is deducted; only positive net P&L counts as a fly win.
 - MON bets are placed directly on a Monad Testnet smart contract; winners split the losing pool proportionally.
 - A 6,300-neuron FlyWire brain visualization renders the fly's live neural activity above the game — a connectome-inspired sensory simulation running continuously on the server.
 - One shared Node.js server broadcasts the same fly, the same round clock, and the same brain to every connected player. No one sees a different game.
@@ -91,7 +91,7 @@ The operator opens a Monad round with a configurable deadline (default 30 second
 
 ### 03 — Position settles
 
-When the betting deadline passes, the operator locks the round on-chain. The server waits for the BTC-USD closing price at the exact deadline timestamp. The fly's P&L determines the outcome.
+When the betting deadline passes, the operator locks the round on-chain. The server records the BTC-USD closing price, calculates directional gross P&L, then deducts a fixed 0.05% simulated round-trip cost. Only positive net P&L is an Epic Gains result.
 
 ### 04 — Result and payout
 

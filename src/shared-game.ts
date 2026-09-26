@@ -32,8 +32,10 @@ export function getSharedClientId() {
   return id;
 }
 
+const API_BASE = import.meta.env.VITE_SERVER_URL ?? "";
+
 export function subscribeToSharedGame(clientId: string, onState: (state: SharedGameSnapshot) => void, onStatus: (online: boolean) => void) {
-  const source = new EventSource(`/api/events?clientId=${encodeURIComponent(clientId)}`);
+  const source = new EventSource(`${API_BASE}/api/events?clientId=${encodeURIComponent(clientId)}`);
   source.onopen = () => { clearBrainStream(); onStatus(true); };
   source.onmessage = (event) => {
     try {
@@ -52,7 +54,7 @@ export function subscribeToSharedGame(clientId: string, onState: (state: SharedG
 }
 
 async function post(path: string, data: Record<string, unknown>) {
-  const response = await fetch(path, { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify(data) });
+  const response = await fetch(`${API_BASE}${path}`, { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify(data) });
   const result = await response.json() as { error?: string };
   if (!response.ok) throw new Error(result.error ?? "Shared game request failed.");
   return result;

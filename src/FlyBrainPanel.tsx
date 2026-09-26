@@ -160,7 +160,6 @@ export default function FlyBrainPanel({ phase, roundId, decision, streamOnline }
 
       <div className="neural-readout">
         <div className="neural-stat"><span>BU KAREDE ATEŞLEYEN</span><b>{frame ? activeIndices.length : "—"}<small> / {assets?.circuit.neurons.length ?? 699}</small></b></div>
-        <div className="neural-stat"><span>SİMÜLASYON ZAMANI</span><b>{frame ? `${(frame.simulatedMs / 1000).toFixed(2)} s` : "—"}</b></div>
       </div>
 
       <div className="neural-active-list" aria-label="Bu karede ateşleyen nöronlar">

@@ -9,10 +9,16 @@ import { createBtcMarketFeed } from "./btc-market.mjs";
 const ROOT = process.cwd();
 const PORT = Number(process.env.PORT ?? 8788);
 const BET_SECONDS = Math.max(10, Math.min(300, Number(process.env.FLY_BET_SECONDS ?? 30)));
+// Paper positions include a disclosed 5 bps simulated round-trip cost, so tiny
+// raw price moves do not count as profitable trades.
+const PAPER_TRADE_COST_PERCENT = 0.05;
 const REVEAL_SECONDS = 4;
 const SETTLED_SECONDS = 3;
 const STATE_FILE = resolve(ROOT, ".flyordie-round.json");
-const RPC_URL = "https://testnet-rpc.monad.xyz";
+// Keep the RPC endpoint that resolves in this user's environment. The
+// rpc.testnet.monad.xyz alias currently fails DNS here, so it must not be
+// selected as an automatic fallback.
+const RPC_URLS = ["https://testnet-rpc.monad.xyz"];
 const CHAIN_ID = 10143;
 const clients = new Set();
 const MIME = { ".html": "text/html; charset=utf-8", ".js": "text/javascript; charset=utf-8", ".css": "text/css; charset=utf-8", ".json": "application/json; charset=utf-8", ".svg": "image/svg+xml", ".png": "image/png", ".ico": "image/x-icon" };
@@ -82,6 +88,9 @@ let round = makeRound(1);
 let connectedCount = 0;
 let operatorContract = null;
 let operatorProvider = null;
+let operatorWallet = null;
+let operatorContractAddress = "";
+let activeRpcIndex = 0;
 let operatorStatus = {
   configured: Boolean(process.env.MONAD_PRIVATE_KEY && process.env.MONAD_CONTRACT_ADDRESS),
   ready: false,
@@ -99,6 +108,16 @@ let rpcFailureCount = 0;
 function nextRpcRetryDelay() {
   rpcFailureCount += 1;
   return Math.min(30_000, 5_000 * (2 ** Math.min(rpcFailureCount - 1, 3)));
+}
+
+function selectRpcEndpoint(index) {
+  const previousProvider = operatorProvider;
+  activeRpcIndex = index;
+  operatorProvider = new JsonRpcProvider(RPC_URLS[activeRpcIndex], CHAIN_ID, { staticNetwork: true });
+  if (previousProvider && previousProvider !== operatorProvider) previousProvider.destroy();
+  if (operatorWallet && operatorContractAddress) {
+    operatorContract = new Contract(operatorContractAddress, OPERATOR_ABI, operatorWallet.connect(operatorProvider));
+  }
 }
 
 function snapshot(clientId) {
@@ -174,20 +193,28 @@ function pushFeed(text, kind = "game") {
 }
 
 function openPreviewRound(id) {
-  const trade = marketFeed.prepareTrade();
+  const trade = prepareFlyTrade();
   const deadline = Date.now() + BET_SECONDS * 1000;
   if (trade) trade.closeAt = deadline;
   return makeRound(id, deadline, undefined, trade);
 }
 
-function settleMarketTrade(targetTime) {
+function prepareFlyTrade() {
+  const trade = marketFeed.prepareTrade();
+  if (trade) trade.costPercent = PAPER_TRADE_COST_PERCENT;
+  return trade;
+}
+
+function settleMarketTrade(targetTime, recoveredTick = null) {
   if (!round.trade || round.trade.status === "legacy") return true;
   if (round.trade.status === "closed") return true;
-  const tick = marketFeed.priceAt(targetTime);
+  const tick = recoveredTick ?? marketFeed.priceAt(targetTime);
   if (!tick || !round.trade.entryPrice || !round.trade.side) return false;
   const marketMove = ((tick.price - round.trade.entryPrice) / round.trade.entryPrice) * 100;
-  const pnlPercent = round.trade.side === "long" ? marketMove : -marketMove;
-  round.trade = { ...round.trade, exitPrice: tick.price, exitAt: tick.time, pnlPercent, status: "closed" };
+  const grossPnlPercent = round.trade.side === "long" ? marketMove : -marketMove;
+  const costPercent = round.trade.costPercent ?? 0;
+  const pnlPercent = grossPnlPercent - costPercent;
+  round.trade = { ...round.trade, exitPrice: tick.price, exitAt: tick.time, exitSource: tick.source === "candle" ? "candle" : "ticker", grossPnlPercent, costPercent, pnlPercent, status: "closed" };
   round.decision.action = round.trade.side === "long" ? "dive" : "dodge";
   round.decision.outcome = pnlPercent > 0 ? "epic_gains" : "liquidated";
   round.decision.multiplier = pnlPercent > 0 ? Number((1 + Math.abs(pnlPercent) * 10).toFixed(2)) : 0;
@@ -199,7 +226,7 @@ function advancePreviewRound() {
   if (operatorStatus.configured) return;
   const now = Date.now();
   if (round.phase === "waiting") {
-    const trade = marketFeed.prepareTrade();
+    const trade = prepareFlyTrade();
     if (!trade) return;
     trade.closeAt = now + BET_SECONDS * 1000;
     round = makeRound(round.id, trade.closeAt, round.scenario.seed, trade);
@@ -243,16 +270,16 @@ function restoreOnchainRound(roundId, closesAt, phase, chainTimestamp) {
 
 async function openNextOnchainRound() {
   const id = Number(await readRpcWithRetry(() => operatorContract.nextRoundId()));
-  const trade = marketFeed.prepareTrade();
+  const trade = prepareFlyTrade();
   if (!trade) throw new Error("Waiting for a fresh Coinbase BTC-USD price before opening the next round.");
-  const latestBlock = await operatorProvider.getBlock("latest");
+  const latestBlock = await readRpcWithRetry(() => operatorProvider.getBlock("latest"));
   if (!latestBlock) throw new Error("Could not read the latest Monad block timestamp.");
   const closesAt = latestBlock.timestamp + BET_SECONDS;
   const tx = await operatorContract.openRound(closesAt);
   const receipt = await tx.wait();
   if (!receipt) throw new Error("Monad did not return a receipt for the new round.");
   let openedBlock = null;
-  try { openedBlock = await operatorProvider.getBlock(receipt.blockNumber); } catch { /* Use the latest block read as a safe fallback. */ }
+  try { openedBlock = await readRpcWithRetry(() => operatorProvider.getBlock(receipt.blockNumber)); } catch { /* Use the latest block read as a safe fallback. */ }
   const chainTimestamp = openedBlock?.timestamp ?? latestBlock.timestamp;
   trade.closeAt = closesAt * 1000;
   round = makeRound(id, Date.now() + Math.max(0, closesAt - chainTimestamp) * 1000, undefined, trade);
@@ -264,7 +291,16 @@ async function openNextOnchainRound() {
 }
 
 async function settleLockedRound(roundId, closesAt) {
-  if (!settleMarketTrade(closesAt * 1000)) {
+  const closeTime = closesAt * 1000;
+  let settled = settleMarketTrade(closeTime);
+  if (!settled) {
+    const recoveredTick = await marketFeed.recoverPriceAt(closeTime);
+    if (recoveredTick) {
+      settled = settleMarketTrade(closeTime, recoveredTick);
+      if (settled) pushFeed(`Round #${roundId} close recovered from Coinbase 1m candle`);
+    }
+  }
+  if (!settled) {
     operatorStatus = { ...operatorStatus, ready: false, message: `Round #${roundId} is locked · waiting for the BTC-USD closing price.` };
     broadcast();
     return false;
@@ -299,7 +335,7 @@ async function syncOnchainGame() {
     round.pools = { liquidated, gains };
 
     if (status === 1) {
-      const latestBlock = await operatorProvider.getBlock("latest");
+      const latestBlock = await readRpcWithRetry(() => operatorProvider.getBlock("latest"));
       if (!latestBlock) throw new Error("Could not read the latest Monad block timestamp.");
       restoreOnchainRound(roundId, closesAt, "betting", latestBlock.timestamp);
       if (latestBlock.timestamp >= closesAt) {
@@ -359,11 +395,19 @@ async function syncOnchainGame() {
 
 async function readRpcWithRetry(read) {
   let lastError;
-  for (let attempt = 0; attempt < 2; attempt++) {
+  const maxAttempts = RPC_URLS.length * 2;
+  for (let attempt = 0; attempt < maxAttempts; attempt++) {
     try { return await read(); }
     catch (error) {
       lastError = error;
-      if (attempt === 0) await new Promise((resolve) => setTimeout(resolve, 500));
+      if (attempt + 1 < maxAttempts) {
+        const nextIndex = (activeRpcIndex + 1) % RPC_URLS.length;
+        if (nextIndex !== activeRpcIndex) {
+          selectRpcEndpoint(nextIndex);
+          console.warn(`Monad RPC read failed; retrying via ${RPC_URLS[nextIndex]}.`);
+        }
+        await new Promise((resolve) => setTimeout(resolve, 500));
+      }
     }
   }
   throw lastError;
@@ -376,11 +420,16 @@ async function initializeOperator() {
   operatorSetupBusy = true;
   try {
     if (!/^0x[a-fA-F0-9]{40}$/.test(address)) throw new Error("MONAD_CONTRACT_ADDRESS is not a valid EVM address.");
-    const provider = new JsonRpcProvider(RPC_URL, CHAIN_ID);
-    operatorProvider = provider;
-    const wallet = new Wallet(key, provider);
-    operatorContract = new Contract(address, OPERATOR_ABI, wallet);
-    const [configuredOperator, walletAddress] = await Promise.all([operatorContract.operator(), wallet.getAddress()]);
+    operatorContractAddress = address;
+    operatorWallet = new Wallet(key);
+    selectRpcEndpoint(0);
+    const walletAddress = await operatorWallet.getAddress();
+    await readRpcWithRetry(async () => {
+      const bytecode = await operatorProvider.getCode(address);
+      if (!bytecode || bytecode === "0x") throw new Error(`No contract bytecode returned by ${RPC_URLS[activeRpcIndex]} for ${address}.`);
+      return bytecode;
+    });
+    const configuredOperator = await readRpcWithRetry(() => operatorContract.operator());
     if (String(configuredOperator).toLowerCase() !== walletAddress.toLowerCase()) {
       throw new Error(`The server wallet ${walletAddress} is not the contract operator ${configuredOperator}.`);
     }
@@ -421,11 +470,22 @@ function json(res, status, data) {
   res.end(JSON.stringify(data));
 }
 
+function setCors(res, req) {
+  const origin = req.headers.origin;
+  if (origin) {
+    res.setHeader("Access-Control-Allow-Origin", origin);
+    res.setHeader("Access-Control-Allow-Methods", "GET, POST, OPTIONS");
+    res.setHeader("Access-Control-Allow-Headers", "Content-Type");
+  }
+}
+
 const server = createServer(async (req, res) => {
   const url = new URL(req.url ?? "/", `http://${req.headers.host ?? "localhost"}`);
+  setCors(res, req);
+  if (req.method === "OPTIONS") { res.writeHead(204); res.end(); return; }
   if (req.method === "GET" && url.pathname === "/api/health") {
     const market = marketFeed.snapshot();
-    return json(res, 200, { ok: true, roundId: round.id, phase: round.phase, connected: connectedCount, operator: operatorStatus, market: { status: market.status, productId: market.productId, price: market.price, updatedAt: market.updatedAt } });
+    return json(res, 200, { ok: true, roundId: round.id, phase: round.phase, connected: connectedCount, rpc: RPC_URLS[activeRpcIndex], operator: operatorStatus, market: { status: market.status, productId: market.productId, price: market.price, updatedAt: market.updatedAt } });
   }
   if (req.method === "GET" && url.pathname === "/api/state") {
     return json(res, 200, snapshot(url.searchParams.get("clientId") ?? "anonymous"));

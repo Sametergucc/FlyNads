@@ -25,6 +25,9 @@ export interface FlyTradeSnapshot {
   closeAt?: number | null;
   exitPrice: number | null;
   exitAt: number | null;
+  exitSource?: "ticker" | "candle";
+  grossPnlPercent?: number;
+  costPercent?: number;
   pnlPercent: number | null;
   status: "waiting" | "open" | "closed" | "legacy";
 }

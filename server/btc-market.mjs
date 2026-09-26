@@ -21,6 +21,9 @@ export function createBtcMarketFeed() {
   let socket = null;
   let reconnectTimer = null;
   let disposed = false;
+  let lastRecoveryMinute = null;
+  let lastRecoveryAt = 0;
+  let recoveredClosingCandle = null;
 
   function mergeHistory(rows) {
     const historical = rows.map(([time, low, high, open, close, volume]) => ({
@@ -112,10 +115,53 @@ export function createBtcMarketFeed() {
   }
 
   function priceAt(timestamp) {
-    for (let index = ticks.length - 1; index >= 0; index--) {
-      if (ticks[index].time <= timestamp) {
-        return timestamp - ticks[index].time <= 15_000 ? { ...ticks[index] } : null;
+    // Settlement runs only after the Monad round is locked, so using the first
+    // Coinbase trade at/after the close cannot leak a price to active bettors.
+    // Prefer that closing tick, then fall back to a recent pre-close trade for
+    // quiet periods. Without this look-forward, a quiet market could leave a
+    // locked round waiting forever for a tick exactly at its deadline.
+    const maxAge = 60_000;
+    for (const tick of ticks) {
+      if (tick.time >= timestamp) {
+        if (tick.time - timestamp <= maxAge) return { ...tick };
+        break;
       }
+    }
+    for (let index = ticks.length - 1; index >= 0; index--) {
+      const tick = ticks[index];
+      if (tick.time <= timestamp) return timestamp - tick.time <= maxAge ? { ...tick } : null;
+    }
+    return null;
+  }
+
+  async function recoverPriceAt(timestamp) {
+    const liveTick = priceAt(timestamp);
+    if (liveTick) return liveTick;
+    const minute = Math.floor(timestamp / CANDLE_MS) * CANDLE_MS;
+    // Wait until the minute containing the close has completed before using its
+    // historical candle. That also lets a restarted operator recover a round
+    // whose in-memory websocket ticks were lost.
+    if (Date.now() < minute + CANDLE_MS) return null;
+    if (lastRecoveryMinute === minute && Date.now() - lastRecoveryAt < 5000) return recoveredClosingCandle;
+    lastRecoveryMinute = minute;
+    lastRecoveryAt = Date.now();
+    recoveredClosingCandle = null;
+    try {
+      const url = new URL(HISTORY_URL);
+      url.searchParams.set("granularity", "60");
+      url.searchParams.set("start", new Date(minute).toISOString());
+      url.searchParams.set("end", new Date(minute + CANDLE_MS).toISOString());
+      const response = await fetch(url, { signal: AbortSignal.timeout(7000), headers: { "User-Agent": "FlyOrDie-Market-Settlement/1.0" } });
+      if (!response.ok) throw new Error(`candle HTTP ${response.status}`);
+      const rows = await response.json();
+      const row = Array.isArray(rows) ? rows.find((item) => Number(item[0]) * 1000 === minute) : null;
+      const close = Number(row?.[4]);
+      if (Number.isFinite(close) && close > 0) {
+        recoveredClosingCandle = { time: minute + CANDLE_MS, price: close, source: "candle" };
+        return recoveredClosingCandle;
+      }
+    } catch (error) {
+      console.warn("Could not recover the BTC-USD closing candle:", error instanceof Error ? error.message : "request failed");
     }
     return null;
   }
@@ -144,5 +190,5 @@ export function createBtcMarketFeed() {
 
   void loadHistory();
   connect();
-  return { snapshot, priceAt, directionFor, prepareTrade, dispose };
+  return { snapshot, priceAt, recoverPriceAt, directionFor, prepareTrade, dispose };
 }
