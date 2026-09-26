@@ -18,7 +18,11 @@ const STATE_FILE = resolve(ROOT, ".flyordie-round.json");
 // Keep the RPC endpoint that resolves in this user's environment. The
 // rpc.testnet.monad.xyz alias currently fails DNS here, so it must not be
 // selected as an automatic fallback.
-const RPC_URLS = ["https://testnet-rpc.monad.xyz"];
+const RPC_URLS = [
+  "https://testnet-rpc.monad.xyz",
+  "https://monad-testnet.drpc.org",
+  "https://testnet-rpc2.monad.xyz",
+];
 const CHAIN_ID = 10143;
 const clients = new Set();
 const MIME = { ".html": "text/html; charset=utf-8", ".js": "text/javascript; charset=utf-8", ".css": "text/css; charset=utf-8", ".json": "application/json; charset=utf-8", ".svg": "image/svg+xml", ".png": "image/png", ".ico": "image/x-icon" };
@@ -454,7 +458,7 @@ void initializeOperator();
 if (operatorStatus.configured) setInterval(() => {
   if (operatorValidated) void syncOnchainGame();
   else void initializeOperator();
-}, 2000).unref();
+}, 4000).unref();
 
 async function readJson(req) {
   let body = "";

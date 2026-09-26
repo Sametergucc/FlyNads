@@ -241,7 +241,7 @@ function App() {
       }
     };
     void refresh();
-    const poll = window.setInterval(() => { void refresh(); }, 6000);
+    const poll = window.setInterval(() => { void refresh(); }, 12000);
     const clock = window.setInterval(() => setChainClock(Math.floor(Date.now() / 1000)), 1000);
     return () => { active = false; window.clearInterval(poll); window.clearInterval(clock); };
   }, [session]);
