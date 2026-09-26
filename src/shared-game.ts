@@ -33,9 +33,56 @@ export function getSharedClientId() {
 }
 
 const API_BASE = import.meta.env.VITE_SERVER_URL ?? "";
+const NGROK_HEADERS: Record<string, string> = API_BASE ? { "ngrok-skip-browser-warning": "1" } : {};
 
 export function subscribeToSharedGame(clientId: string, onState: (state: SharedGameSnapshot) => void, onStatus: (online: boolean) => void) {
-  const source = new EventSource(`${API_BASE}/api/events?clientId=${encodeURIComponent(clientId)}`);
+  const url = `${API_BASE}/api/events?clientId=${encodeURIComponent(clientId)}`;
+  // EventSource does not support custom headers; use fetch-based SSE for ngrok compatibility.
+  if (API_BASE) {
+    let aborted = false;
+    const controller = new AbortController();
+    const connect = async () => {
+      while (!aborted) {
+        try {
+          const response = await fetch(url, { headers: NGROK_HEADERS, signal: controller.signal });
+          if (!response.ok || !response.body) { onStatus(false); await new Promise((r) => setTimeout(r, 3000)); continue; }
+          clearBrainStream(); onStatus(true);
+          const reader = response.body.getReader();
+          const decoder = new TextDecoder();
+          let buffer = "";
+          while (true) {
+            const { value, done } = await reader.read();
+            if (done) break;
+            buffer += decoder.decode(value, { stream: true });
+            const parts = buffer.split("\n\n");
+            buffer = parts.pop() ?? "";
+            for (const part of parts) {
+              if (part.startsWith(": ")) continue;
+              const eventMatch = part.match(/^event: (\w+)\ndata: (.+)$/s);
+              const dataMatch = part.match(/^data: (.+)$/s);
+              if (eventMatch && eventMatch[1] === "brain") {
+                try { publishBrainFrame(JSON.parse(eventMatch[2]) as BrainLiveFrame); } catch {}
+              } else if (dataMatch) {
+                try {
+                  const state = JSON.parse(dataMatch[1]) as SharedGameSnapshot;
+                  publishBrainFrame(state.brain);
+                  onState(state);
+                  onStatus(true);
+                } catch { onStatus(false); }
+              }
+            }
+          }
+        } catch {
+          if (aborted) return;
+          clearBrainStream(); onStatus(false);
+          await new Promise((r) => setTimeout(r, 3000));
+        }
+      }
+    };
+    void connect();
+    return () => { aborted = true; controller.abort(); clearBrainStream(); };
+  }
+  const source = new EventSource(url);
   source.onopen = () => { clearBrainStream(); onStatus(true); };
   source.onmessage = (event) => {
     try {
@@ -54,7 +101,7 @@ export function subscribeToSharedGame(clientId: string, onState: (state: SharedG
 }
 
 async function post(path: string, data: Record<string, unknown>) {
-  const response = await fetch(`${API_BASE}${path}`, { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify(data) });
+  const response = await fetch(`${API_BASE}${path}`, { method: "POST", headers: { "Content-Type": "application/json", ...NGROK_HEADERS }, body: JSON.stringify(data) });
   const result = await response.json() as { error?: string };
   if (!response.ok) throw new Error(result.error ?? "Shared game request failed.");
   return result;

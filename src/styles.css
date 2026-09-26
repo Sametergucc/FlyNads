@@ -342,6 +342,9 @@ button { color: inherit; }
   font: 8px var(--mono);
 }
 .notice { border-color: #a2b6ff30; background: #a2b6ff0d; color: #b7c5e9; line-height: 1.45; }
+.verify-bet-button { display: block; min-height: 32px; margin: 8px 18px 0 auto; padding: 0 11px; border: 1px solid #a2b6ff55; border-radius: 5px; background: #a2b6ff12; color: #c6d2ff; font: 8px var(--mono); cursor: pointer; }
+.verify-bet-button:hover:not(:disabled) { background: #a2b6ff24; }
+.verify-bet-button:disabled { opacity: .5; cursor: wait; }
 .claim-area { margin: 13px 18px 0; padding: 10px; border: 1px solid #283429; border-radius: 7px; background: #0b100c; }
 .claim-summary { display: flex; justify-content: space-between; align-items: center; gap: 10px; margin: 0; padding: 0; border: 0; background: transparent; color: #8e9d82; font: 8px var(--mono); letter-spacing: .06em; }
 .claim-summary > span { display: flex; align-items: center; gap: 8px; }

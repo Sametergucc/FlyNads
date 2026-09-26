@@ -119,6 +119,7 @@ function App() {
   const [walletBusy, setWalletBusy] = useState(false);
   const [betBusy, setBetBusy] = useState(false);
   const [notice, setNotice] = useState("");
+  const [uncertainBet, setUncertainBet] = useState<UncertainBet | null>(null);
 
   const decision = useMemo(() => decideFly(scenario), [scenario]);
   const sharedActive = sharedOnline && sharedState !== null;
@@ -154,6 +155,8 @@ function App() {
   const displayedBet = chainMode
     ? session && chainStake > 0 ? { side: chainSide, amount: chainStake } : confirmedLocalBet?.roundId === chainRoundId ? confirmedLocalBet : null
     : sharedActive ? sharedState.myBet : null;
+  const uncertainBetForCurrentRound = Boolean(session && uncertainBet && uncertainBet.address.toLowerCase() === session.address.toLowerCase() && uncertainBet.roundId === chainRoundId);
+  const uncertainBetCheckDelay = uncertainBet ? Math.max(0, 8_000 - (Date.now() - uncertainBet.createdAt)) : 0;
   const displayedChat = sharedActive ? sharedState.chat : chat;
   const displayedFeed = sharedActive && (!chainMode || sharedChainRound) ? sharedState.feed : feed;
   const totalPool = displayedPools.liquidated + displayedPools.gains;
@@ -166,6 +169,11 @@ function App() {
   }, []);
 
   useEffect(() => { setSelected(null); }, [chainRoundId]);
+
+  useEffect(() => {
+    if (!session) { setUncertainBet(null); return; }
+    setUncertainBet(loadUncertainBet(session.address, chainRoundId));
+  }, [session?.address, chainRoundId]);
 
   useEffect(() => {
     if (chainReady || sharedActive) return;
@@ -315,7 +323,7 @@ function App() {
   }
 
   async function placeBet(side: Side) {
-    if (displayedPhase !== "betting" || displayedBet || betBusy) return;
+    if (displayedPhase !== "betting" || displayedBet || betBusy || uncertainBetForCurrentRound) return;
     if (!session) {
       await connectWallet();
       return;
@@ -351,7 +359,48 @@ function App() {
       }
     } catch (error) {
       console.warn("Bet transaction failed.", error);
-      setNotice(error instanceof Error ? error.message : "Bet could not be placed. Try again.");
+      if (isAmbiguousBetError(error)) {
+        const pending: UncertainBet = { address: session.address, roundId: chainRoundId, side, amount: value, createdAt: Date.now() };
+        try { localStorage.setItem(uncertainBetStorageKey(session.address, chainRoundId), JSON.stringify(pending)); } catch { /* Keep the in-memory safety lock if storage is unavailable. */ }
+        setUncertainBet(pending);
+        setNotice(`RPC is rate limited. The status of your #${chainRoundId} bet is unknown; do not submit it again until chain status is checked.`);
+      } else {
+        setNotice(error instanceof Error ? error.message : "Bet could not be placed. Try again.");
+      }
+    } finally { setBetBusy(false); }
+  }
+
+  async function verifyUncertainBet() {
+    const pending = uncertainBet;
+    if (!session || !pending || pending.address.toLowerCase() !== session.address.toLowerCase() || betBusy) return;
+    setBetBusy(true);
+    try {
+      const latest = await readLatestChainRound(publicChainProvider);
+      const position = await readChainPosition(publicChainProvider, session.address, pending.roundId);
+      const liquidated = Number(position.liquidatedStake);
+      const gains = Number(position.gainsStake);
+      const total = liquidated + gains;
+      try { localStorage.removeItem(uncertainBetStorageKey(session.address, pending.roundId)); } catch { /* Storage cleanup is best effort. */ }
+      setUncertainBet((current) => current?.roundId === pending.roundId && current.address.toLowerCase() === session.address.toLowerCase() ? null : current);
+      if (total > 0) {
+        const actualSide: Side = gains > liquidated ? "gains" : "liquidated";
+        setConfirmedLocalBet({ roundId: pending.roundId, side: actualSide, amount: total });
+        setSelected(actualSide);
+        if (latest.roundId === pending.roundId) {
+          setChainRoundId(latest.roundId);
+          setChainRound(latest.round);
+          setChainPosition(position);
+        }
+        setNotice(`On-chain bet found for round #${pending.roundId}: ${total.toFixed(4)} MON on ${actualSide.toUpperCase()}.`);
+        return;
+      }
+      const roundStillOpen = latest.roundId === pending.roundId && latest.round.status === 1 && latest.round.closesAt > Math.floor(Date.now() / 1000);
+      setNotice(roundStillOpen
+        ? `No bet is recorded for round #${pending.roundId}. It is safe to submit once now.`
+        : `No bet is recorded for round #${pending.roundId}, and that round is no longer open. Wait for the next round.`);
+    } catch (error) {
+      console.warn("Could not verify the uncertain bet.", error);
+      setNotice("Could not verify the bet because the RPC is still busy. Keep this lock and check again in a few seconds; do not resubmit yet.");
     } finally { setBetBusy(false); }
   }
 
@@ -455,14 +504,14 @@ function App() {
             <div className="pool-track"><i style={{width:`${liquidatedPercent}%`}} /></div>
             <p className="trade-rule">{currentTradeHasOldTerms ? "BU TUR ESKİ KURALLA AÇILDI; EK SİMÜLE MALİYET UYGULANMAZ." : `SİNEK, %${(activeTrade?.costPercent ?? 0.05).toLocaleString("tr-TR", { minimumFractionDigits: 2 })} simüle maliyet sonrası net getirisi pozitifse kazanır.`}</p>
             <div className="bet-buttons">
-              <button className={`bet-choice liquidated ${selected === "liquidated" ? "selected" : ""}`} onClick={() => placeBet("liquidated")} disabled={!chainReady || !chainRound || displayedPhase !== "betting" || displayedSeconds <= 0 || !!displayedBet || betBusy || chainRound.status !== 1}>
+              <button className={`bet-choice liquidated ${selected === "liquidated" ? "selected" : ""}`} onClick={() => placeBet("liquidated")} disabled={!chainReady || !chainRound || displayedPhase !== "betting" || displayedSeconds <= 0 || !!displayedBet || betBusy || uncertainBetForCurrentRound || chainRound.status !== 1}>
                 <span className="choice-emoji">☠</span><span className="choice-copy"><b>FLY LOSES</b><small>POSITION LIQUIDATED</small></span><span className="choice-percent">{liquidatedPercent}%</span>
               </button>
-              <button className={`bet-choice gains ${selected === "gains" ? "selected" : ""}`} onClick={() => placeBet("gains")} disabled={!chainReady || !chainRound || displayedPhase !== "betting" || displayedSeconds <= 0 || !!displayedBet || betBusy || chainRound.status !== 1}>
+              <button className={`bet-choice gains ${selected === "gains" ? "selected" : ""}`} onClick={() => placeBet("gains")} disabled={!chainReady || !chainRound || displayedPhase !== "betting" || displayedSeconds <= 0 || !!displayedBet || betBusy || uncertainBetForCurrentRound || chainRound.status !== 1}>
                 <span className="choice-emoji">↗</span><span className="choice-copy"><b>FLY WINS</b><small>PROFITABLE BTC TRADE</small></span><span className="choice-percent">{100-liquidatedPercent}%</span>
               </button>
             </div>
-            <div className="bet-controls"><label htmlFor="bet-amount">BET AMOUNT</label><div className="amount-control"><input id="bet-amount" aria-label="Bet amount" inputMode="decimal" autoComplete="off" maxLength={16} placeholder="0.05" value={amount} onChange={(e)=>setAmount(e.target.value)} type="text" disabled={!!displayedBet || betBusy}/><span>MON</span><button type="button" onClick={()=>setAmount("0.10")} disabled={!!displayedBet || betBusy}>0.10</button></div><span className="balance-text">{!session ? "Enter amount now · connect wallet before betting" : displayedBet ? "Your call is locked for this round" : displayedPhase !== "betting" ? "Amount ready · betting opens next round" : chainMode ? "Choose a side before the timer ends" : "Preview mode · no real bet"}</span></div>
+            <div className="bet-controls"><label htmlFor="bet-amount">BET AMOUNT</label><div className="amount-control"><input id="bet-amount" aria-label="Bet amount" inputMode="decimal" autoComplete="off" maxLength={16} placeholder="0.05" value={amount} onChange={(e)=>setAmount(e.target.value)} type="text" disabled={!!displayedBet || betBusy || uncertainBetForCurrentRound}/><span>MON</span><button type="button" onClick={()=>setAmount("0.10")} disabled={!!displayedBet || betBusy || uncertainBetForCurrentRound}>0.10</button></div><span className="balance-text">{uncertainBetForCurrentRound ? "Bet status uncertain · check chain before retrying" : !session ? "Enter amount now · connect wallet before betting" : displayedBet ? "Your call is locked for this round" : displayedPhase !== "betting" ? "Amount ready · betting opens next round" : chainMode ? "Choose a side before the timer ends" : "Preview mode · no real bet"}</span></div>
             {displayedBet && <div className="bet-receipt">✓ YOUR {displayedBet.side.toUpperCase()} CALL · {displayedBet.amount.toFixed(2)} {chainMode ? "MON" : "PTS"}</div>}
 
             <div className="claim-area">
@@ -470,6 +519,7 @@ function App() {
               {claimables.length > 0 ? <div className="claim-list">{claimables.map((payout) => <div className="claim-row" key={`${payout.contractAddress}-${payout.roundId}`}><span>ROUND #{payout.roundId}</span><b>{Number(payout.amount).toFixed(4)} MON</b><button onClick={() => void claimOnePayout(payout)} disabled={betBusy}>{betBusy ? "…" : "CLAIM"}</button></div>)}</div> : <p className="claim-empty">{session ? "Winnings show here after a round is settled." : "Connect wallet to view winnings."}</p>}
             </div>
             {notice && <div className="notice" role="status">{notice}</div>}
+            {uncertainBetForCurrentRound && uncertainBet && <button className="verify-bet-button" onClick={() => void verifyUncertainBet()} disabled={betBusy || uncertainBetCheckDelay > 0}>{betBusy ? "CHECKING CHAIN…" : uncertainBetCheckDelay > 0 ? `CHECK STATUS IN ${Math.ceil(uncertainBetCheckDelay / 1000)}s` : `CHECK ROUND #${uncertainBet.roundId} BET STATUS ↗`}</button>}
             {chainReady && sharedActive && !sharedState.operator?.ready && <p className={`operator-status ${settlementPricePending ? "operator-pending" : "operator-error"}`}>{!sharedState.operator.configured ? "Sunucuda Monad operatör anahtarı ayarlı değil. Test cüzdanı anahtarını yalnızca sunucu PowerShell penceresinde tanımlayıp sunucuyu yeniden başlatın." : settlementPricePending ? `Tur #${sharedState.roundId} Monad'da kilitli. Sunucu BTC/USD kapanış fiyatını bekliyor; fiyat gelince turu otomatik sonuçlandıracak. Bu sırada tekrar bahis göndermeyin.` : `Monad operatör işlemi tamamlanamadı: ${sharedState.operator.message}`}</p>}
           </section>
         </div>
