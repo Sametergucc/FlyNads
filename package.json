@@ -1,0 +1,33 @@
+{
+  "name": "flyordie-mvp",
+  "private": true,
+  "version": "0.1.0",
+  "type": "module",
+  "scripts": {
+    "dev": "vite --host 0.0.0.0 --configLoader runner",
+    "server": "node server/server.mjs",
+    "build": "tsc -b && vite build --configLoader runner",
+    "preview": "vite preview --host 0.0.0.0",
+    "contract:compile": "hardhat compile",
+    "contract:deploy:testnet": "hardhat run scripts/deploy.cjs --network monadTestnet",
+    "contract:round": "node scripts/manage-round.cjs",
+    "brain:build": "node scripts/build-neural-circuit.mjs",
+    "brain:cloud": "node scripts/build-brain-cloud.mjs"
+  },
+  "dependencies": {
+    "ethers": "^6.15.0",
+    "react": "^19.1.0",
+    "react-dom": "^19.1.0"
+  },
+  "devDependencies": {
+    "@nomicfoundation/hardhat-ethers": "^3.1.0",
+    "@types/react": "^19.1.0",
+    "@types/react-dom": "^19.1.0",
+    "@vitejs/plugin-react": "^4.7.0",
+    "hardhat": "^2.26.3",
+    "hyparquet": "^1.31.1",
+    "hyparquet-compressors": "^1.1.1",
+    "typescript": "~5.8.3",
+    "vite": "^6.3.5"
+  }
+}

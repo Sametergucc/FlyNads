@@ -1,0 +1,9 @@
+node_modules/
+dist/
+artifacts/
+cache/
+data/brain/
+coverage/
+.env*
+!.env.example
+.flyordie-round.json
