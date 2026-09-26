@@ -267,11 +267,14 @@ async function scanClaimables(provider: Provider, bettor: string): Promise<Claim
     state.pendingRounds = state.pendingRounds.filter((id) => id <= lastRound);
 
     // Only revisit rounds that are still open/locked and newly opened rounds.
-    // Completed history is cached locally so every refresh does not rescan it.
     for (const roundId of [...state.pendingRounds]) {
       await inspectClaimRound(contract, poolAddress, bettor, roundId, state);
       saveClaimScanState(poolAddress, bettor, state);
     }
+
+    // Scan only the last 20 rounds to avoid RPC overload on large round counts.
+    const scanStart = Math.max(state.scannedThrough + 1, lastRound - 19);
+    if (state.scannedThrough < scanStart - 1) state.scannedThrough = scanStart - 1;
     while (state.scannedThrough < lastRound) {
       const roundId = state.scannedThrough + 1;
       await inspectClaimRound(contract, poolAddress, bettor, roundId, state);
@@ -279,7 +282,6 @@ async function scanClaimables(provider: Provider, bettor: string): Promise<Claim
       saveClaimScanState(poolAddress, bettor, state);
     }
 
-    // A payout can disappear if the wallet claims it from another tab/device.
     for (const [roundId, payout] of [...state.payouts]) {
       if (await readWithRetry(() => contract.claimed(roundId, bettor))) state.payouts.delete(roundId);
       else claimables.push(payout);
