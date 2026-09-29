@@ -1,0 +1,16 @@
+services:
+  - type: web
+    runtime: node
+    name: flyordie-server
+    plan: free
+    buildCommand: npm install
+    startCommand: node server/server.mjs
+    envVars:
+      - key: PORT
+        value: "10000"
+      - key: MONAD_PRIVATE_KEY
+        sync: false
+      - key: MONAD_CONTRACT_ADDRESS
+        sync: false
+      - key: NODE_ENV
+        value: production
