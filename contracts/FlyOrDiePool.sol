@@ -122,6 +122,50 @@ contract FlyOrDiePool {
         if (!ok) revert TransferFailed();
     }
 
+    /// @notice Operator auto-claims on behalf of a bettor after resolving a round.
+    /// @dev Payout is sent directly to the bettor's address.
+    function claimFor(uint256 roundId, address bettor) external onlyOperator {
+        uint256 payout = _claimableFor(bettor, roundId);
+        (bool ok,) = payable(bettor).call{value: payout}("");
+        if (!ok) revert TransferFailed();
+    }
+
+    /// @notice Operator batch auto-claims for all bettors in a resolved round.
+    function claimForBatch(uint256 roundId, address[] calldata bettors) external onlyOperator {
+        for (uint256 i; i < bettors.length; ++i) {
+            // Skip silently if bettor has no payout or already claimed.
+            uint256 payout = _tryClaimableFor(bettors[i], roundId);
+            if (payout > 0) {
+                (bool ok,) = payable(bettors[i]).call{value: payout}("");
+                if (!ok) revert TransferFailed();
+            }
+        }
+    }
+
+    /// @dev Non-reverting version: returns 0 instead of reverting for already-claimed or no-payout.
+    function _tryClaimableFor(address bettor, uint256 roundId) private returns (uint256 payout) {
+        Round storage round = rounds[roundId];
+        if (round.status != Status.Resolved) return 0;
+        if (claimed[roundId][bettor]) return 0;
+        claimed[roundId][bettor] = true;
+
+        uint256 gainsStake = gainsBets[roundId][bettor];
+        uint256 liquidatedStake = liquidatedBets[roundId][bettor];
+        uint256 winningPool = round.gainsWon ? round.gainsPool : round.liquidatedPool;
+        uint256 losingPool = round.gainsWon ? round.liquidatedPool : round.gainsPool;
+        uint256 winnerStake = round.gainsWon ? gainsStake : liquidatedStake;
+        if (winningPool == 0) {
+            payout = gainsStake + liquidatedStake;
+        } else if (winnerStake != 0) {
+            payout = winnerStake + (winnerStake * losingPool) / winningPool;
+        }
+        if (payout == 0) {
+            claimed[roundId][bettor] = false;
+            return 0;
+        }
+        emit PayoutClaimed(roundId, bettor, payout);
+    }
+
     function _claimableFor(address bettor, uint256 roundId) private returns (uint256 payout) {
         Round storage round = rounds[roundId];
         if (round.status != Status.Resolved) revert InvalidRound();

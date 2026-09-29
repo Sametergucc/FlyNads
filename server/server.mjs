@@ -33,6 +33,8 @@ const OPERATOR_ABI = [
   "function openRound(uint64 closesAt) returns (uint256 roundId)",
   "function lockRound(uint256 roundId)",
   "function resolveRound(uint256 roundId, bool gainsWon)",
+  "function claimForBatch(uint256 roundId, address[] bettors)",
+  "event BetPlaced(uint256 indexed roundId, address indexed bettor, bool gains, uint256 amount)",
 ];
 
 // The server may load the local, git-ignored .env.local for server-only keys.
@@ -316,7 +318,32 @@ async function settleLockedRound(roundId, closesAt) {
   operatorStatus = { ...operatorStatus, ready: true, message: `Round #${roundId} resolved · opening the next round automatically.` };
   pushFeed(`Round #${roundId} resolved · ${gainsWon ? "EPIC GAINS" : "LIQUIDATED"}`);
   broadcast();
+
+  // Auto-claim: pay out all bettors automatically so they don't have to claim manually.
+  autoClaimForRound(roundId).catch((err) => console.error(`[auto-claim] round #${roundId} failed:`, err.message));
+
   return true;
+}
+
+async function autoClaimForRound(roundId) {
+  if (!operatorContract) return;
+  try {
+    const filter = operatorContract.filters.BetPlaced(roundId);
+    const logs = await readRpcWithRetry(() => operatorContract.queryFilter(filter));
+    const bettors = [...new Set(logs.map((l) => l.args.bettor))];
+    if (bettors.length === 0) {
+      console.log(`[auto-claim] round #${roundId}: no bettors found.`);
+      return;
+    }
+    console.log(`[auto-claim] round #${roundId}: paying out ${bettors.length} bettor(s)…`);
+    const tx = await operatorContract.claimForBatch(roundId, bettors);
+    await tx.wait();
+    pushFeed(`Auto-claimed payouts for ${bettors.length} player(s) in round #${roundId}`);
+    console.log(`[auto-claim] round #${roundId}: done ✓`);
+    broadcast();
+  } catch (err) {
+    console.error(`[auto-claim] round #${roundId}:`, err.message);
+  }
 }
 
 async function syncOnchainGame() {
