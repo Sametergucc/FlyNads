@@ -549,4 +549,17 @@ const server = createServer(async (req, res) => {
   json(res, 404, { error: "Not found." });
 });
 
-server.listen(PORT, "0.0.0.0", () => console.log(`FlyOrDie shared game server on http://localhost:${PORT} (round #${round.id})`));
+server.listen(PORT, "0.0.0.0", () => {
+  console.log(`FlyOrDie shared game server on http://localhost:${PORT} (round #${round.id})`);
+
+  // Keep-alive self-ping: prevents Render free tier from sleeping (every 14 min)
+  if (process.env.RENDER_EXTERNAL_URL) {
+    const KEEP_ALIVE_MS = 14 * 60 * 1000;
+    setInterval(() => {
+      fetch(`${process.env.RENDER_EXTERNAL_URL}/api/state`)
+        .then(() => console.log("[keep-alive] pinged self"))
+        .catch(() => {});
+    }, KEEP_ALIVE_MS);
+    console.log(`[keep-alive] will ping ${process.env.RENDER_EXTERNAL_URL} every 14 min`);
+  }
+});
