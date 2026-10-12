@@ -221,15 +221,6 @@ button { color: inherit; }
 .btc-chart-state { position: absolute; z-index: 5; top: 50%; left: 50%; transform: translate(-50%, -50%); padding: 8px 12px; border: 1px solid #60747a55; border-radius: 5px; background: #091115da; color: #adc1c2; font: 8px var(--mono); white-space: nowrap; }
 .btc-state-stale { color: #ffcc83; }
 .btc-state-offline { color: #ff9197; }
-.fly-position-chip { position: absolute; z-index: 4; top: 57px; right: 17px; display: grid; gap: 4px; min-width: 106px; padding: 7px 9px; border: 1px solid #d7bbff45; border-radius: 5px; background: #15121ee8; box-shadow: 0 5px 20px #0005; text-align: right; }
-.fly-position-chip span { color: #a99bbd; font: 6px var(--mono); letter-spacing: .08em; }
-.fly-position-chip b { color: #d7bbff; font: 700 12px var(--mono); }
-.fly-position-chip small { color: #98a7ad; font: 6px var(--mono); white-space: nowrap; }
-.fly-position-chip.is-long { border-color: #56d7b351; }
-.fly-position-chip.is-long b { color: #65e8c4; }
-.main-fly { position: absolute; z-index: 3; right: 4%; top: 36%; width: 18%; height: 59%; min-width: 0; min-height: 0; opacity: .94; }
-.main-fly .fly-art { width: 100%; max-width: 165px; }
-.main-fly .fly-caption { margin-top: -10px; padding: 3px 6px; border: 1px solid #30494b; border-radius: 3px; background: #091115c9; color: #c7ddd8; font-size: 7px; letter-spacing: .1em; }
 .field-progress { position: absolute; z-index: 4; left: 0; bottom: 0; width: 100%; height: 2px; background: #293328; }
 .field-progress i { display: block; height: 100%; background: var(--green); box-shadow: 0 0 8px var(--green); transition: width .5s linear; }
 .round-result { margin-top: 11px; padding: 13px 14px 12px; border: 1px solid #426d56; border-radius: 7px; background: linear-gradient(105deg,#10231d,#101820 70%); }
@@ -479,7 +470,6 @@ button { color: inherit; }
   .play-column, .right-column { gap: 12px; }
   .sim-panel { padding: 13px 12px 0; }
   .flight-field { height: 280px; }
-  .main-fly { left: 28%; width: 44%; }
   .round-result-stats { grid-template-columns: repeat(2, minmax(0, 1fr)); }
   .bet-topline { padding: 14px 13px 11px; }
   .pool-summary { padding-right: 13px; padding-left: 13px; }
@@ -564,15 +554,26 @@ body { background: radial-gradient(ellipse at 47% -32%, #6cddcb12, transparent 4
 .btc-entry-line, .btc-exit-line { stroke: #aab8b5aa; stroke-dasharray: 4 6; }
 .btc-entry-label { fill: #d1dcda; font: 8px var(--mono); }
 .btc-chart-state { border-color: #ffffff17; border-radius: 8px; background: #0c1213e6; color: #adbab7; font-size: 8px; }
-.fly-position-chip { top: 69px; right: 18px; min-width: 74px; padding: 6px 8px; border-color: #72dfcc32; border-radius: 7px; background: #0c1312d9; box-shadow: none; }
-.fly-position-chip span { color: #71827f; }
-.fly-position-chip b, .fly-position-chip.is-long b { color: #9be9dc; font-size: 10px; }
-.fly-position-chip.is-short { border-color: #ffffff20; }
-.fly-position-chip.is-short b { color: #c3cecb; }
-.main-fly { right: 5%; top: 42%; width: 18%; height: 52%; opacity: .88; }
-.main-fly .fly-caption { border-color: #ffffff22; border-radius: 5px; background: #0b1110d9; color: #bdceca; font-size: 7px; }
 .field-progress { height: 2px; background: #ffffff0c; }
 .field-progress i { background: var(--green); box-shadow: 0 0 9px #72dfcc90; }
+.signal-node { position: absolute; z-index: 4; top: 48%; right: 7%; display: grid; justify-items: center; gap: 6px; min-width: 82px; transform: translateY(-50%); pointer-events: none; }
+.signal-orbit { position: relative; width: 62px; height: 62px; display: grid; place-items: center; border: 1px solid #72dfcc4b; border-radius: 50%; background: radial-gradient(circle, #72dfcc10, #0a1110c9 67%); box-shadow: 0 0 30px #72dfcc0b, inset 0 0 18px #72dfcc0a; }
+.signal-orbit::before, .signal-orbit::after { content: ""; position: absolute; border: 1px solid #72dfcc25; border-radius: 50%; }
+.signal-orbit::before { inset: 6px; border-style: dashed; animation: signal-orbit-spin 18s linear infinite; }
+.signal-orbit::after { inset: -5px; border-color: #72dfcc16; }
+.signal-orbit i { position: absolute; top: 5px; right: 9px; width: 5px; height: 5px; border-radius: 50%; background: #a8efe4; box-shadow: 0 0 9px #72dfcc; animation: signal-pulse 2.2s ease-in-out infinite; }
+.signal-orbit b { color: #a1ece0; font: 500 20px var(--mono); text-shadow: 0 0 14px #72dfcc55; }
+.signal-node small { color: #70807d; font: 600 6px var(--mono); letter-spacing: .12em; }
+.signal-node strong { color: #bfd4cf; font: 600 8px var(--mono); letter-spacing: .08em; }
+.signal-short .signal-orbit { border-color: #b7c5c133; }
+.signal-short .signal-orbit::before { border-color: #b7c5c126; }
+.signal-short .signal-orbit i { background: #b7c5c1; box-shadow: 0 0 8px #b7c5c166; }
+.signal-short .signal-orbit b, .signal-short strong { color: #c3d0cd; }
+.signal-idle .signal-orbit { border-color: #ffffff26; }
+.signal-idle .signal-orbit::before { border-color: #ffffff16; }
+.signal-idle .signal-orbit b { color: #aab7b3; }
+@keyframes signal-orbit-spin { to { transform: rotate(1turn); } }
+@keyframes signal-pulse { 50% { opacity: .4; box-shadow: 0 0 2px #72dfcc; } }
 .trade-status-card { margin-top: 14px; padding: 13px 14px 11px; border: 1px solid #ffffff10; border-radius: 10px; background: linear-gradient(115deg, #ffffff05, #72dfcc04); }
 .trade-status-card.is-loss { background: linear-gradient(115deg, #ffffff05, #ffffff02); }
 .trade-status-main { display: flex; align-items: center; gap: 10px; }
@@ -728,7 +729,8 @@ body { background: radial-gradient(ellipse at 47% -32%, #6cddcb12, transparent 4
   .sim-countdown { min-width: 77px; padding: 7px 8px; }
   .sim-countdown b { font-size: 11px; }
   .flight-field { height: min(78vw, 390px); min-height: 290px; }
-  .main-fly { right: 2%; width: 23%; }
+  .signal-node { right: 4%; }
+  .signal-orbit { width: 52px; height: 52px; }
   .trade-status-card { padding: 11px 10px; }
   .trade-stage-line { margin-left: 37px; gap: 5px; font-size: 6px; }
   .trade-metrics > div + div { padding-left: 8px; }

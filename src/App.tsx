@@ -1,5 +1,4 @@
 import { useEffect, useMemo, useState, type FormEvent } from "react";
-import LiveFly, { type FlyMotion } from "./LiveFly";
 import FlyBrainPanel from "./FlyBrainPanel";
 import BtcCandlestickChart from "./BtcCandlestickChart";
 import { decideFly, type Scenario } from "./game-engine";
@@ -144,9 +143,6 @@ function App() {
     : chainMode && chainRound!.status === 1
       ? Math.max(0, chainRound!.closesAt - chainClock)
     : chainMode ? 0 : sharedActive ? sharedState.seconds : seconds;
-  const displayedOutcome = chainMode && chainRound!.status === 3
-    ? chainRound!.gainsWon ? "epic_gains" : "liquidated"
-    : activeDecision?.outcome ?? decision.outcome;
   const displayedPools = chainReady
     ? chainRound ? { liquidated: Number(chainRound.liquidatedPool), gains: Number(chainRound.gainsPool) } : { liquidated: 0, gains: 0 }
     : sharedActive ? sharedState.pools : pools;
@@ -281,12 +277,6 @@ function App() {
     });
   }, [session, chainRoundId]);
 
-  const flyMotion: FlyMotion = displayedPhase === "waiting" || displayedPhase === "betting"
-    ? "hover"
-    : displayedPhase === "reveal"
-      ? activeDecision?.action ?? decision.action
-      : displayedOutcome === "epic_gains" ? "gains" : "liquidated";
-  const flyPositionLabel = activeTrade?.status === "open" ? activeTrade.side?.toUpperCase() ?? "READY" : activeTrade?.status === "closed" ? displayedOutcome.replace("_", " ").toUpperCase() : activeMarket?.status === "live" ? "TRADE PREPARING" : "BTC/USD CONNECTING";
   const tradeDuration = (activeTrade?.closeAt ?? 0) - (activeTrade?.entryAt ?? 0);
   const tradeProgress = tradeDuration > 0 ? Math.max(0, Math.min(100, ((tradeDuration - displayedSeconds * 1000) / tradeDuration) * 100)) : 0;
   const savedResult = lastFlyResult?.roundId === activeRoundId ? lastFlyResult : null;
@@ -486,8 +476,11 @@ function App() {
             <div className={`flight-field field-${displayedPhase}`}>
               <div className="field-grid" />
               <BtcCandlestickChart market={activeMarket} trade={activeTrade} />
-              {activeTrade?.side && <div className={`fly-position-chip ${activeTrade.side === "short" ? "is-short" : "is-long"}`}><span>FLY POSITION</span><b>{activeTrade.side.toUpperCase()}</b></div>}
-              <LiveFly motion={flyMotion} className="main-fly" label={flyPositionLabel} />
+              <div className={`signal-node ${activeTrade?.side ? `signal-${activeTrade.side}` : "signal-idle"}`} aria-label={activeTrade?.side ? `Fly trading ${activeTrade.side}` : "Fly signal scanner waiting"}>
+                <span className="signal-orbit"><i /><b>{activeTrade?.side === "long" ? "↗" : activeTrade?.side === "short" ? "↘" : "✳"}</b></span>
+                <small>{activeTrade?.side ? "AI POSITION" : "SIGNAL SCAN"}</small>
+                <strong>{activeTrade?.side?.toUpperCase() ?? "SCANNING"}</strong>
+              </div>
               <div className="field-progress"><i style={{width:`${displayedPhase === "betting" ? tradeProgress : displayedPhase === "reveal" ? 88 : displayedPhase === "waiting" ? 0 : 100}%`}} /></div>
             </div>
             <section className={`trade-status-card ${resultIsClosed && typeof resultPnl === "number" && resultPnl < 0 ? "is-loss" : ""}`} aria-live="polite">
