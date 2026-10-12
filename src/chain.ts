@@ -250,43 +250,56 @@ async function inspectClaimRound(contract: Contract, poolAddress: string, bettor
 async function scanClaimables(provider: Provider, bettor: string): Promise<ClaimablePayout[]> {
   const claimables: ClaimablePayout[] = [];
   const addresses = [...new Set([contractAddress, ...legacyContractAddresses].filter((value) => /^0x[a-fA-F0-9]{40}$/.test(value)))];
+  const failures: string[] = [];
+  let scannedPools = 0;
   for (const poolAddress of addresses) {
-    const contract = getContract(provider, undefined, poolAddress);
-    const nextRound = Number(await readWithRetry(() => contract.nextRoundId()));
-    if (!Number.isSafeInteger(nextRound) || nextRound < 1 || nextRound > 10_000) {
-      throw new Error(`Kontrattaki tur sayısı beklenmeyen bir değer döndürdü (${poolAddress}).`);
-    }
-
-    const lastRound = nextRound - 1;
     const state = getClaimScanState(poolAddress, bettor);
-    if (state.scannedThrough > lastRound) {
-      state.scannedThrough = 0;
-      state.pendingRounds = [];
-      state.payouts.clear();
-    }
-    state.pendingRounds = state.pendingRounds.filter((id) => id <= lastRound);
+    try {
+      const contract = getContract(provider, undefined, poolAddress);
+      const nextRound = Number(await readWithRetry(() => contract.nextRoundId()));
+      if (!Number.isSafeInteger(nextRound) || nextRound < 1 || nextRound > 10_000) {
+        throw new Error(`Unexpected round count (${poolAddress}).`);
+      }
 
-    // Only revisit rounds that are still open/locked and newly opened rounds.
-    for (const roundId of [...state.pendingRounds]) {
-      await inspectClaimRound(contract, poolAddress, bettor, roundId, state);
+      const lastRound = nextRound - 1;
+      if (state.scannedThrough > lastRound) {
+        state.scannedThrough = 0;
+        state.pendingRounds = [];
+        state.payouts.clear();
+      }
+      state.pendingRounds = state.pendingRounds.filter((id) => id <= lastRound);
+
+      // Only revisit rounds that are still open/locked and newly opened rounds.
+      for (const roundId of [...state.pendingRounds]) {
+        await inspectClaimRound(contract, poolAddress, bettor, roundId, state);
+        saveClaimScanState(poolAddress, bettor, state);
+      }
+
+      // Scan only the last 20 rounds to avoid RPC overload on large round counts.
+      const scanStart = Math.max(state.scannedThrough + 1, lastRound - 19);
+      if (state.scannedThrough < scanStart - 1) state.scannedThrough = scanStart - 1;
+      while (state.scannedThrough < lastRound) {
+        const roundId = state.scannedThrough + 1;
+        await inspectClaimRound(contract, poolAddress, bettor, roundId, state);
+        state.scannedThrough = roundId;
+        saveClaimScanState(poolAddress, bettor, state);
+      }
+
+      for (const [roundId, payout] of [...state.payouts]) {
+        if (await readWithRetry(() => contract.claimed(roundId, bettor))) state.payouts.delete(roundId);
+        else claimables.push(payout);
+      }
       saveClaimScanState(poolAddress, bettor, state);
+      scannedPools++;
+    } catch (error) {
+      // One retired/temporarily unavailable pool must not hide winnings from
+      // another pool. Keep its last known claimables visible while retrying.
+      failures.push(`${poolAddress}: ${error instanceof Error ? error.message : String(error)}`);
+      claimables.push(...state.payouts.values());
     }
-
-    // Scan only the last 20 rounds to avoid RPC overload on large round counts.
-    const scanStart = Math.max(state.scannedThrough + 1, lastRound - 19);
-    if (state.scannedThrough < scanStart - 1) state.scannedThrough = scanStart - 1;
-    while (state.scannedThrough < lastRound) {
-      const roundId = state.scannedThrough + 1;
-      await inspectClaimRound(contract, poolAddress, bettor, roundId, state);
-      state.scannedThrough = roundId;
-      saveClaimScanState(poolAddress, bettor, state);
-    }
-
-    for (const [roundId, payout] of [...state.payouts]) {
-      if (await readWithRetry(() => contract.claimed(roundId, bettor))) state.payouts.delete(roundId);
-      else claimables.push(payout);
-    }
-    saveClaimScanState(poolAddress, bettor, state);
+  }
+  if (addresses.length > 0 && scannedPools === 0) {
+    throw new Error(failures.join(" | ") || "No claim pool could be read.");
   }
   return claimables;
 }

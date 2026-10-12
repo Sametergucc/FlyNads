@@ -21,7 +21,6 @@ const STATE_FILE = resolve(ROOT, ".flyordie-round.json");
 const RPC_URLS = [
   "https://testnet-rpc.monad.xyz",
   "https://monad-testnet.drpc.org",
-  "https://testnet-rpc2.monad.xyz",
 ];
 const CHAIN_ID = 10143;
 const clients = new Set();
@@ -103,6 +102,7 @@ let round = makeRound(1);
 let connectedCount = 0;
 let operatorContract = null;
 let operatorProvider = null;
+const rpcProviders = new Map();
 let operatorWallet = null;
 let operatorContractAddress = "";
 let activeRpcIndex = 0;
@@ -136,10 +136,13 @@ function describeOperatorFailure(error, retrySeconds) {
 }
 
 function selectRpcEndpoint(index) {
-  const previousProvider = operatorProvider;
   activeRpcIndex = index;
-  operatorProvider = new JsonRpcProvider(RPC_URLS[activeRpcIndex], CHAIN_ID, { staticNetwork: true });
-  if (previousProvider && previousProvider !== operatorProvider) previousProvider.destroy();
+  // Keep old providers alive: an auto-claim or transaction receipt may still
+  // be using one while another request switches the active RPC endpoint.
+  if (!rpcProviders.has(RPC_URLS[activeRpcIndex])) {
+    rpcProviders.set(RPC_URLS[activeRpcIndex], new JsonRpcProvider(RPC_URLS[activeRpcIndex], CHAIN_ID, { staticNetwork: true }));
+  }
+  operatorProvider = rpcProviders.get(RPC_URLS[activeRpcIndex]);
   if (operatorWallet && operatorContractAddress) {
     operatorContract = new Contract(operatorContractAddress, OPERATOR_ABI, operatorWallet.connect(operatorProvider));
   }
@@ -351,7 +354,12 @@ async function autoClaimForRound(roundId) {
   if (!operatorContract) return;
   try {
     const filter = operatorContract.filters.BetPlaced(roundId);
-    const logs = await readRpcWithRetry(() => operatorContract.queryFilter(filter));
+    // Monad public RPCs cap eth_getLogs at a 100-block range. Auto-claim runs
+    // just after settlement, so every bet for this round is in the latest
+    // 100 blocks. Bound both ends explicitly instead of asking for all history.
+    const toBlock = await readRpcWithRetry(() => operatorProvider.getBlockNumber());
+    const fromBlock = Math.max(0, toBlock - 99);
+    const logs = await readRpcWithRetry(() => operatorContract.queryFilter(filter, fromBlock, toBlock));
     const bettors = [...new Set(logs.map((l) => l.args.bettor))];
     if (bettors.length === 0) {
       console.log(`[auto-claim] round #${roundId}: no bettors found.`);

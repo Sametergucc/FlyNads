@@ -134,7 +134,13 @@ function App() {
   const activeMarket = sharedActive ? sharedState.market : null;
   const demoPhase: Phase = sharedActive ? sharedState.phase : phase;
   const displayedPhase: Phase = chainMode
-    ? sharedPhaseReady ? sharedState?.phase ?? "waiting" : chainRound!.status === 0 || chainBetExpired || chainRound!.status === 1 ? "waiting" : chainRound!.status === 2 ? "reveal" : "settled"
+    ? sharedPhaseReady
+      ? sharedState?.phase ?? "waiting"
+      : chainRound!.status === 0
+        ? "waiting"
+        : chainRound!.status === 1
+          ? chainBetExpired ? "waiting" : "betting"
+          : chainRound!.status === 2 ? "reveal" : "settled"
     : demoPhase;
   const operatorWaiting = Boolean(chainMode && displayedPhase === "waiting" && (!sharedActive || !sharedState.operator.ready));
   const marketWaiting = Boolean(chainMode && displayedPhase === "waiting" && !operatorWaiting);
@@ -250,7 +256,7 @@ function App() {
         const available = await readAllClaimables(session.provider, session.address);
         if (active) {
           setClaimables(available);
-          setNotice((current) => current.startsWith("Claim bakiyesi okunamadı:") ? "" : current);
+          setNotice((current) => current.startsWith("Winnings could not be loaded.") ? "" : current);
         }
       } catch (error) {
         if (active) {
