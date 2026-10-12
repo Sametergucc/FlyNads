@@ -101,6 +101,7 @@ function App() {
   const [pools, setPools] = useState({ liquidated: 1.42, gains: 1.76 });
   const [chat, setChat] = useState(CHAT_START);
   const [chatDraft, setChatDraft] = useState("");
+  const [swarmView, setSwarmView] = useState<"chat" | "activity">("chat");
   const [feed, setFeed] = useState<FeedItem[]>([
     { id: 1, text: "Round #2407 betting opened", kind: "game" },
     { id: 2, text: "0x8f2a bet 0.12 MON on EPIC GAINS", kind: "tx" },
@@ -131,7 +132,6 @@ function App() {
   const activeDecision = sharedActive && (!chainMode || sharedChainRound) ? sharedState.decision ?? decision : decision;
   const activeRoundId = sharedActive ? sharedState.roundId : roundId;
   const activeTrade: FlyTradeSnapshot | null = sharedActive ? sharedState.trade : null;
-  const currentTradeHasOldTerms = activeTrade?.status === "open" && activeTrade.costPercent == null;
   const activeMarket = sharedActive ? sharedState.market : null;
   const demoPhase: Phase = sharedActive ? sharedState.phase : phase;
   const displayedPhase: Phase = chainMode
@@ -289,6 +289,12 @@ function App() {
   const flyPositionLabel = activeTrade?.status === "open" ? activeTrade.side?.toUpperCase() ?? "READY" : activeTrade?.status === "closed" ? displayedOutcome.replace("_", " ").toUpperCase() : activeMarket?.status === "live" ? "TRADE PREPARING" : "BTC/USD CONNECTING";
   const tradeDuration = (activeTrade?.closeAt ?? 0) - (activeTrade?.entryAt ?? 0);
   const tradeProgress = tradeDuration > 0 ? Math.max(0, Math.min(100, ((tradeDuration - displayedSeconds * 1000) / tradeDuration) * 100)) : 0;
+  const savedResult = lastFlyResult?.roundId === activeRoundId ? lastFlyResult : null;
+  const resultSide = activeTrade?.side ?? savedResult?.side;
+  const resultEntry = activeTrade?.entryPrice ?? savedResult?.entryPrice;
+  const resultExit = activeTrade?.exitPrice ?? savedResult?.exitPrice;
+  const resultPnl = activeTrade?.pnlPercent ?? savedResult?.pnlPercent;
+  const resultIsClosed = activeTrade?.status === "closed" || Boolean(savedResult);
 
   useEffect(() => {
     if (activeTrade?.status !== "closed" || !activeTrade.side || activeTrade.entryPrice == null || activeTrade.exitPrice == null || activeTrade.pnlPercent == null) return;
@@ -463,7 +469,10 @@ function App() {
     <main className="app-shell">
       <header className="topbar">
         <a className="brand" href="#top" aria-label="FlyOrDie home"><span className="brand-mark">F<span>✳</span></span><span>FLY<span className="brand-dim">OR</span>DIE</span></a>
-        <div className={`round-live ${operatorWaiting || marketWaiting ? "round-live-waiting" : ""}`}><i />{operatorWaiting ? "WAITING FOR OPERATOR" : marketWaiting ? "WAITING FOR BTC/USD" : displayedPhase === "betting" ? "BETTING LIVE" : displayedPhase === "reveal" ? activeTrade?.status === "closed" ? "ROUND RESULT" : "TRADE SETTLING" : displayedPhase === "settled" ? "ROUND COMPLETE" : "NEXT ROUND"}<b>#{chainReady ? chainRoundId : activeRoundId}</b></div>
+        <div className="header-indicators" aria-label="Round status">
+          <div className="header-indicator"><span>ROUND</span><b>#{chainReady ? chainRoundId : activeRoundId}</b><i><em style={{ width: `${displayedPhase === "settled" ? 100 : displayedPhase === "reveal" ? 82 : displayedPhase === "betting" ? Math.max(8, Math.min(100, tradeProgress)) : 4}%` }} /></i></div>
+          <div className={`header-indicator ${operatorWaiting || marketWaiting ? "is-waiting" : ""}`}><span>STATUS</span><b>{operatorWaiting ? "OPERATOR" : marketWaiting ? "SYNCING" : displayedPhase === "betting" ? `OPEN · ${displayedSeconds}s` : displayedPhase.toUpperCase()}</b><i><em style={{ width: `${displayedPhase === "betting" ? 100 - Math.min(100, tradeProgress) : displayedPhase === "settled" ? 100 : 38}%` }} /></i></div>
+        </div>
         <button className="wallet-button" onClick={connectWallet} disabled={walletBusy}>{session ? `${session.address.slice(0,6)}…${session.address.slice(-4)}` : walletBusy ? "CONNECTING…" : "CONNECT WALLET ↗"}</button>
       </header>
 
@@ -471,69 +480,53 @@ function App() {
         <div className="play-column">
           <section className="panel sim-panel">
             <div className="sim-heading">
-              <div><span className="eyebrow">ONE FLY · ONE SHARED ROUND</span><h1>REKT <em>OR</em> RICH<span>.</span></h1></div>
-              <div className="sim-countdown"><small>{operatorWaiting ? "ROUND OPERATOR" : marketWaiting ? "BTC/USD POSITION" : displayedPhase === "betting" ? "BETTING CLOSES" : displayedPhase === "reveal" ? activeTrade?.status === "closed" ? "ROUND RESULT" : "TRADE SETTLEMENT" : displayedPhase === "settled" ? "TRADE RESULT" : "NEXT ROUND"}</small><b>{operatorWaiting ? "OFFLINE" : marketWaiting ? "SYNCING" : displayedPhase === "betting" ? `00:${String(displayedSeconds).padStart(2,"0")}` : activeTrade?.status === "closed" && activeTrade.pnlPercent != null ? `${activeTrade.pnlPercent >= 0 ? "+" : ""}${activeTrade.pnlPercent.toFixed(3)}%` : displayedPhase.toUpperCase()}</b></div>
+              <div className="sim-title"><span className="swarm-glyph">✳</span><div><span className="eyebrow">FLYOR DIE · ROUND #{chainReady ? chainRoundId : activeRoundId}</span><h1>The Swarm Decision</h1></div></div>
+              <div className={`sim-countdown ${operatorWaiting || marketWaiting ? "is-waiting" : ""}`}><small>{operatorWaiting ? "OPERATOR" : marketWaiting ? "MARKET" : displayedPhase === "betting" ? "CLOSES IN" : displayedPhase === "reveal" ? "SETTLING" : displayedPhase === "settled" ? "REALIZED" : "NEXT ROUND"}</small><b>{operatorWaiting ? "—" : marketWaiting ? "SYNC" : displayedPhase === "betting" ? `00:${String(displayedSeconds).padStart(2,"0")}` : resultIsClosed && typeof resultPnl === "number" ? `${resultPnl >= 0 ? "+" : ""}${resultPnl.toFixed(3)}%` : displayedPhase.toUpperCase()}</b></div>
             </div>
             <div className={`flight-field field-${displayedPhase}`}>
               <div className="field-grid" />
               <BtcCandlestickChart market={activeMarket} trade={activeTrade} />
-              <div className={`fly-position-chip ${activeTrade?.side === "short" ? "is-short" : "is-long"}`}><span>SİNEK POZİSYONU</span><b>{activeTrade?.side?.toUpperCase() ?? "—"}</b>{activeTrade?.entryPrice != null && <small>GİRİŞ {activeTrade.entryPrice.toLocaleString("en-US", { style: "currency", currency: "USD" })}</small>}</div>
+              {activeTrade?.side && <div className={`fly-position-chip ${activeTrade.side === "short" ? "is-short" : "is-long"}`}><span>FLY POSITION</span><b>{activeTrade.side.toUpperCase()}</b></div>}
               <LiveFly motion={flyMotion} className="main-fly" label={flyPositionLabel} />
               <div className="field-progress"><i style={{width:`${displayedPhase === "betting" ? tradeProgress : displayedPhase === "reveal" ? 88 : displayedPhase === "waiting" ? 0 : 100}%`}} /></div>
             </div>
-            {lastFlyResult && <section className={`round-result ${lastFlyResult.pnlPercent > 0 ? "round-result-win" : "round-result-loss"}`} aria-live="polite">
-              <div className="round-result-heading">
-                <div><span className="eyebrow">SON TUR · #{lastFlyResult.roundId}</span><h2>{lastFlyResult.pnlPercent > 0 ? "SİNEK KAZANDI" : "SİNEK KAYBETTİ"}</h2></div>
-                <b className="round-result-outcome">{lastFlyResult.pnlPercent > 0 ? "KÂRLI İŞLEM" : "ZARARLI İŞLEM"}</b>
-              </div>
-              <div className="round-result-stats">
-                <div><span>SİNEĞİN HAMLESİ</span><b className={lastFlyResult.side === "long" ? "result-long" : "result-short"}>{lastFlyResult.side.toUpperCase()}</b></div>
-                <div><span>GİRİŞ</span><b>${lastFlyResult.entryPrice.toLocaleString("en-US", { minimumFractionDigits: 2, maximumFractionDigits: 2 })}</b></div>
-                <div><span>ÇIKIŞ</span><b>${lastFlyResult.exitPrice.toLocaleString("en-US", { minimumFractionDigits: 2, maximumFractionDigits: 2 })}</b></div>
-                <div><span>NET SONUÇ</span><b className="result-pnl">{lastFlyResult.pnlPercent > 0 ? "+" : ""}{lastFlyResult.pnlPercent.toFixed(3)}%</b></div>
-              </div>
-              <p className="round-result-source">Brüt fiyat getirisi {lastFlyResult.grossPnlPercent > 0 ? "+" : ""}{lastFlyResult.grossPnlPercent.toFixed(3)}% · simüle maliyet −{lastFlyResult.costPercent.toFixed(3)}% · net getiri {lastFlyResult.pnlPercent > 0 ? "+" : ""}{lastFlyResult.pnlPercent.toFixed(3)}%</p>
-              {lastFlyResult.exitSource === "candle" && <p className="round-result-source">Kapanış fiyatı Coinbase 1 dakikalık mumundan kurtarıldı.</p>}
-            </section>}
-            <div className="sim-footer"><span><i className="pulse-dot"/>{sharedActive ? `${sharedState.connected} watching` : "shared game offline"}</span><span>{activeTrade?.status === "open" && activeTrade.pnlPercent != null ? `P&L ${activeTrade.pnlPercent >= 0 ? "+" : ""}${activeTrade.pnlPercent.toFixed(3)}%` : activeTrade?.status === "closed" ? `BTC-USD · ${displayedOutcome.replace("_"," ").toUpperCase()}` : "PAPER TRADE · NO BTC ORDER"}</span></div>
-          </section>
-
-          <section className="panel bet-panel">
-            <div className="bet-topline"><div><span className="eyebrow">PREDICT THE BTC TRADE</span><h2>{displayedPhase === "waiting" ? operatorWaiting ? "Round operator is offline" : marketWaiting ? "Waiting for BTC/USD position" : "Next round is opening" : displayedPhase === "betting" ? "Will the fly make a profit?" : displayedPhase === "reveal" && activeTrade?.status !== "closed" ? "Closing the fly’s position" : "Trade result"}</h2></div><span className={`phase-tag phase-${displayedPhase}`}>{displayedPhase === "betting" ? "OPEN" : activeTrade?.status === "closed" && displayedPhase === "reveal" ? "RESULT" : displayedPhase.toUpperCase()}</span></div>
-            <div className="pool-summary"><span>POOL <b>{totalPool.toFixed(4)} {chainReady ? "MON" : "PTS"}</b></span><span>{liquidatedPercent}% / {100-liquidatedPercent}%</span></div>
-            <div className="pool-track"><i style={{width:`${liquidatedPercent}%`}} /></div>
-            <p className="trade-rule">{currentTradeHasOldTerms ? "BU TUR ESKİ KURALLA AÇILDI; EK SİMÜLE MALİYET UYGULANMAZ." : `SİNEK, %${(activeTrade?.costPercent ?? 0.05).toLocaleString("tr-TR", { minimumFractionDigits: 2 })} simüle maliyet sonrası net getirisi pozitifse kazanır.`}</p>
-            <div className="bet-buttons">
-              <button className={`bet-choice liquidated ${selected === "liquidated" ? "selected" : ""}`} onClick={() => placeBet("liquidated")} disabled={!chainReady || !chainRound || displayedPhase !== "betting" || displayedSeconds <= 0 || !!displayedBet || betBusy || uncertainBetForCurrentRound || chainRound.status !== 1}>
-                <span className="choice-emoji">☠</span><span className="choice-copy"><b>FLY LOSES</b><small>POSITION LIQUIDATED</small></span><span className="choice-percent">{liquidatedPercent}%</span>
-              </button>
-              <button className={`bet-choice gains ${selected === "gains" ? "selected" : ""}`} onClick={() => placeBet("gains")} disabled={!chainReady || !chainRound || displayedPhase !== "betting" || displayedSeconds <= 0 || !!displayedBet || betBusy || uncertainBetForCurrentRound || chainRound.status !== 1}>
-                <span className="choice-emoji">↗</span><span className="choice-copy"><b>FLY WINS</b><small>PROFITABLE BTC TRADE</small></span><span className="choice-percent">{100-liquidatedPercent}%</span>
-              </button>
-            </div>
-            <div className="bet-controls"><label htmlFor="bet-amount">BET AMOUNT</label><div className="amount-control"><input id="bet-amount" aria-label="Bet amount" inputMode="decimal" autoComplete="off" maxLength={16} placeholder="0.05" value={amount} onChange={(e)=>setAmount(e.target.value)} type="text" disabled={!!displayedBet || betBusy || uncertainBetForCurrentRound}/><span>MON</span><button type="button" onClick={()=>setAmount("0.10")} disabled={!!displayedBet || betBusy || uncertainBetForCurrentRound}>0.10</button></div><span className="balance-text">{uncertainBetForCurrentRound ? "Bet status uncertain · check chain before retrying" : !session ? "Enter amount now · connect wallet before betting" : displayedBet ? "Your call is locked for this round" : displayedPhase !== "betting" ? "Amount ready · betting opens next round" : chainMode ? "Choose a side before the timer ends" : "Preview mode · no real bet"}</span></div>
-            {displayedBet && <div className="bet-receipt">✓ YOUR {displayedBet.side.toUpperCase()} CALL · {displayedBet.amount.toFixed(2)} {chainMode ? "MON" : "PTS"}</div>}
-
-            <div className="claim-area">
-              <div className="claim-summary"><span>UNCLAIMED <b>{claimableTotal.toFixed(4)} MON</b></span><button className="claim-button" onClick={claimAllPayouts} disabled={!session || claimables.length === 0 || betBusy}>{betBusy ? "PROCESSING…" : `CLAIM ALL${claimables.length ? ` · ${claimables.length}` : ""} ↗`}</button></div>
-              {claimables.length > 0 ? <div className="claim-list">{claimables.map((payout) => <div className="claim-row" key={`${payout.contractAddress}-${payout.roundId}`}><span>ROUND #{payout.roundId}</span><b>{Number(payout.amount).toFixed(4)} MON</b><button onClick={() => void claimOnePayout(payout)} disabled={betBusy}>{betBusy ? "…" : "CLAIM"}</button></div>)}</div> : <p className="claim-empty">{session ? "Winnings show here after a round is settled." : "Connect wallet to view winnings."}</p>}
-            </div>
-            {notice && <div className="notice" role="status">{notice}</div>}
-            {uncertainBetForCurrentRound && uncertainBet && <button className="verify-bet-button" onClick={() => void verifyUncertainBet()} disabled={betBusy || uncertainBetCheckDelay > 0}>{betBusy ? "CHECKING CHAIN…" : uncertainBetCheckDelay > 0 ? `CHECK STATUS IN ${Math.ceil(uncertainBetCheckDelay / 1000)}s` : `CHECK ROUND #${uncertainBet.roundId} BET STATUS ↗`}</button>}
-            {chainReady && sharedActive && !sharedState.operator?.ready && <p className={`operator-status ${settlementPricePending ? "operator-pending" : "operator-error"}`}>{!sharedState.operator.configured ? "Sunucuda Monad operatör anahtarı ayarlı değil. Test cüzdanı anahtarını yalnızca sunucu PowerShell penceresinde tanımlayıp sunucuyu yeniden başlatın." : settlementPricePending ? `Tur #${sharedState.roundId} Monad'da kilitli. Sunucu BTC/USD kapanış fiyatını bekliyor; fiyat gelince turu otomatik sonuçlandıracak. Bu sırada tekrar bahis göndermeyin.` : `Monad operatör işlemi tamamlanamadı: ${sharedState.operator.message}`}</p>}
+            <section className={`trade-status-card ${resultIsClosed && typeof resultPnl === "number" && resultPnl < 0 ? "is-loss" : ""}`} aria-live="polite">
+              <div className="trade-status-main"><span className={`trade-state-icon ${resultIsClosed ? "is-done" : activeTrade?.status === "open" ? "is-live" : ""}`}>{resultIsClosed ? typeof resultPnl === "number" && resultPnl >= 0 ? "↗" : "↓" : activeTrade?.status === "open" ? "◌" : "·"}</span><div><small>{resultIsClosed ? "REALIZED" : activeTrade?.status === "open" ? "IN POSITION" : "TRADE STATUS"}</small><b>{resultSide ? `${resultSide.toUpperCase()} · ${resultIsClosed ? typeof resultPnl === "number" && resultPnl >= 0 ? "PROFITABLE" : "LIQUIDATED" : "BTC / USD"}` : "Waiting for fly signal"}</b></div><span className="trade-round">#{savedResult?.roundId ?? activeRoundId}</span></div>
+              <div className="trade-stage-line"><span className={resultSide ? "is-active" : ""}>{resultSide?.toUpperCase() ?? "SIGNAL"}</span><i className={resultSide ? "is-active" : ""}/><span className={resultIsClosed ? "is-active" : ""}>{resultIsClosed && typeof resultPnl === "number" ? resultPnl >= 0 ? "PROFITABLE" : "LIQUIDATED" : "OPEN"}</span><i className={resultIsClosed ? "is-active" : ""}/><span className={resultIsClosed ? "is-active" : ""}>{resultIsClosed ? "REALIZED" : "LIVE"}</span></div>
+              <div className="trade-metrics"><div><span>ENTRY</span><b>{typeof resultEntry === "number" ? `$${resultEntry.toLocaleString("en-US", { minimumFractionDigits: 2, maximumFractionDigits: 2 })}` : "—"}</b></div><div><span>EXIT</span><b>{typeof resultExit === "number" ? `$${resultExit.toLocaleString("en-US", { minimumFractionDigits: 2, maximumFractionDigits: 2 })}` : activeTrade?.status === "open" && typeof activeMarket?.price === "number" ? `$${activeMarket.price.toLocaleString("en-US", { minimumFractionDigits: 2, maximumFractionDigits: 2 })}` : "—"}</b></div><div><span>NET P&L</span><b className={typeof resultPnl === "number" && resultPnl < 0 ? "is-negative" : "is-positive"}>{typeof resultPnl === "number" ? `${resultPnl > 0 ? "+" : ""}${resultPnl.toFixed(3)}%` : "—"}</b></div></div>
+              {savedResult && <small className="trade-cost-note">Gross {savedResult.grossPnlPercent > 0 ? "+" : ""}{savedResult.grossPnlPercent.toFixed(3)}% · costs −{savedResult.costPercent.toFixed(3)}%</small>}
+            </section>
+            <div className="sim-footer"><span><i className="pulse-dot"/>{sharedActive ? `${sharedState.connected} watching` : "shared game offline"}</span><span>{activeMarket?.status === "live" ? "BTC · LIVE" : "BTC · CONNECTING"}</span></div>
           </section>
         </div>
 
         <aside className="right-column">
           <FlyBrainPanel phase={displayedPhase} roundId={activeRoundId} decision={activeDecision} streamOnline={sharedOnline} />
-          <section className="panel social-panel">
-            <div className="side-heading"><div><span className="eyebrow">THE SWARM</span><h2>Chat <span className="online-count">{sharedActive ? `${sharedState.connected} online` : "offline"}</span></h2></div><span className="chat-live"><i/>{sharedActive ? "LIVE" : "OFFLINE"}</span></div>
-            <div className="chat-feed" aria-live="polite">{displayedChat.map((item,i)=><div className="chat-message" key={`${item.name}-${i}`}><span className="chat-name" style={{color:item.color}}>{item.name}</span><p>{item.text}</p></div>)}</div>
-            <form className="chat-form" onSubmit={sendChat}><input value={chatDraft} onChange={(e)=>setChatDraft(e.target.value)} placeholder="Message the swarm…" aria-label="Chat message" maxLength={120}/><button aria-label="Send message">↗</button></form>
-          </section>
-          <section className="panel tx-panel">
-            <div className="side-heading"><div><span className="eyebrow">LIVE</span><h2>Recent activity</h2></div><span className="block-badge">#{chainReady ? chainRoundId : activeRoundId}</span></div>
-            <div className="tx-feed">{displayedFeed.map((item)=><div className="tx-row" key={item.id}><span className={`tx-icon ${item.kind}`}>{item.kind === "tx" ? "↗" : "◈"}</span><div><p>{item.text}</p><small>{item.kind === "tx" ? "TRANSACTION" : "ROUND EVENT"}</small></div><span className="tx-status">●</span></div>)}</div>
+          <section className="panel swarm-panel">
+            <div className="swarm-heading"><div><span className="eyebrow">ONE FLY · ONE SHARED ROUND</span><h2>Swarm feed</h2></div><span className={`swarm-online ${sharedActive ? "is-live" : ""}`}><i />{sharedActive ? `${sharedState.connected} online` : "OFFLINE"}</span></div>
+            <div className="decision-summary"><span className={`decision-mark ${resultIsClosed && typeof resultPnl === "number" && resultPnl < 0 ? "is-loss" : ""}`}>{resultIsClosed ? typeof resultPnl === "number" && resultPnl >= 0 ? "↗" : "↓" : "✳"}</span><div><small>{resultIsClosed ? "LAST TRADE" : activeTrade?.status === "open" ? "FLY IS TRADING" : "FLY SIGNAL"}</small><b>{resultSide ? `${resultSide.toUpperCase()}${resultIsClosed && typeof resultPnl === "number" ? ` · ${resultPnl >= 0 ? "PROFITABLE" : "LIQUIDATED"}` : " · IN PROGRESS"}` : "Waiting for BTC position"}</b></div><span className="decision-value">{typeof resultPnl === "number" ? `${resultPnl > 0 ? "+" : ""}${resultPnl.toFixed(3)}%` : activeMarket?.price ? `$${activeMarket.price.toLocaleString("en-US", { maximumFractionDigits: 2 })}` : "—"}</span></div>
+
+            <div className="swarm-betting">
+              <div className="pool-summary"><span>POOL <b>{totalPool.toFixed(3)} {chainReady ? "MON" : "PTS"}</b></span><span>{liquidatedPercent}% / {100-liquidatedPercent}%</span></div>
+              <div className="dual-bet-control">
+                <button className={`dual-bet-option option-loss ${selected === "liquidated" ? "selected" : ""}`} onClick={() => placeBet("liquidated")} disabled={!chainReady || !chainRound || displayedPhase !== "betting" || displayedSeconds <= 0 || !!displayedBet || betBusy || uncertainBetForCurrentRound || chainRound.status !== 1}>
+                  <span>FLY LOSES</span><b>{liquidatedPercent}%</b><i><em style={{ width: `${liquidatedPercent}%` }} /></i>
+                </button>
+                <button className={`dual-bet-option option-win ${selected === "gains" ? "selected" : ""}`} onClick={() => placeBet("gains")} disabled={!chainReady || !chainRound || displayedPhase !== "betting" || displayedSeconds <= 0 || !!displayedBet || betBusy || uncertainBetForCurrentRound || chainRound.status !== 1}>
+                  <span>FLY WINS</span><b>{100-liquidatedPercent}%</b><i><em style={{ width: `${100-liquidatedPercent}%` }} /></i>
+                </button>
+              </div>
+              <div className="inline-bet-amount"><label htmlFor="bet-amount">BET</label><input id="bet-amount" aria-label="Bet amount" inputMode="decimal" autoComplete="off" maxLength={16} placeholder="0.05" value={amount} onChange={(e)=>setAmount(e.target.value)} type="text" disabled={!!displayedBet || betBusy || uncertainBetForCurrentRound}/><span>MON</span><button type="button" onClick={()=>setAmount("0.10")} disabled={!!displayedBet || betBusy || uncertainBetForCurrentRound}>0.10</button></div>
+              {displayedBet && <div className="bet-receipt">✓ {displayedBet.side.toUpperCase()} · {displayedBet.amount.toFixed(2)} {chainMode ? "MON" : "PTS"}</div>}
+              {uncertainBetForCurrentRound && uncertainBet && <button className="verify-bet-button" onClick={() => void verifyUncertainBet()} disabled={betBusy || uncertainBetCheckDelay > 0}>{betBusy ? "CHECKING CHAIN…" : uncertainBetCheckDelay > 0 ? `CHECK STATUS IN ${Math.ceil(uncertainBetCheckDelay / 1000)}s` : `CHECK ROUND #${uncertainBet.roundId} BET STATUS ↗`}</button>}
+              <div className="claim-summary"><span>CLAIMABLE <b>{claimableTotal.toFixed(4)} MON</b></span><button className="claim-button" onClick={claimAllPayouts} disabled={!session || claimables.length === 0 || betBusy}>{betBusy ? "…" : `CLAIM ALL${claimables.length ? ` · ${claimables.length}` : ""} ↗`}</button></div>
+              {claimables.length > 0 && <div className="claim-list">{claimables.map((payout) => <div className="claim-row" key={`${payout.contractAddress}-${payout.roundId}`}><span>ROUND #{payout.roundId}</span><b>{Number(payout.amount).toFixed(4)} MON</b><button onClick={() => void claimOnePayout(payout)} disabled={betBusy}>CLAIM</button></div>)}</div>}
+              {notice && <div className="notice" role="status">{notice}</div>}
+              {chainReady && sharedActive && !sharedState.operator?.ready && <p className={`operator-status ${settlementPricePending ? "operator-pending" : "operator-error"}`}>{!sharedState.operator.configured ? "Operator wallet is not configured." : settlementPricePending ? `Round #${sharedState.roundId} is locked; waiting for BTC/USD close.` : sharedState.operator.message}</p>}
+            </div>
+
+            <div className="swarm-feed-heading"><span>{swarmView === "chat" ? "SWARM CHAT" : "RECENT ACTIVITY"}</span><div className="swarm-tabs" role="tablist" aria-label="Swarm feed view"><button role="tab" aria-selected={swarmView === "chat"} className={swarmView === "chat" ? "is-active" : ""} onClick={() => setSwarmView("chat")}>CHAT</button><button role="tab" aria-selected={swarmView === "activity"} className={swarmView === "activity" ? "is-active" : ""} onClick={() => setSwarmView("activity")}>ACTIVITY</button></div></div>
+            {swarmView === "chat" ? <><div className="chat-feed" aria-live="polite">{displayedChat.map((item,i)=><div className="chat-message" key={`${item.name}-${i}`}><span className="chat-name" style={{color:item.color}}>{item.name}</span><p>{item.text}</p></div>)}</div><form className="chat-form" onSubmit={sendChat}><input value={chatDraft} onChange={(e)=>setChatDraft(e.target.value)} placeholder="Write a message…" aria-label="Chat message" maxLength={120}/><button aria-label="Send message">↗</button></form></> : <div className="tx-feed">{displayedFeed.map((item)=><div className="tx-row" key={item.id}><span className={`tx-icon ${item.kind}`}>{item.kind === "tx" ? "↗" : "◈"}</span><div><p>{item.text}</p><small>{item.kind === "tx" ? "TRANSACTION" : "ROUND EVENT"}</small></div><span className="tx-status">●</span></div>)}</div>}
           </section>
         </aside>
       </section>
