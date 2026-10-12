@@ -5,7 +5,7 @@ const graphPath = resolve(process.cwd(), "src/data/flywire-vision-circuit.json")
 const graph = JSON.parse(readFileSync(graphPath, "utf8"));
 
 const STEP_MS = 0.1;
-const DURATION_MS = 160;
+const DURATION_MS = 240;
 const FRAME_MS = 5;
 const MEMBRANE_TAU_MS = 20;
 const SYNAPSE_TAU_MS = 5;
@@ -14,15 +14,15 @@ const RESTING_MV = -52;
 const THRESHOLD_MV = -45;
 const RESET_MV = -52;
 const WEIGHT_PER_SYNAPSE_MV = 0.275;
-const VISUAL_STIMULUS_SCALE = 250;
-// Game readout cutoff; this is a gameplay rule, not a parameter claimed by the paper.
-const STEERING_READOUT_THRESHOLD_HZ = 455;
+const VISUAL_STIMULUS_SCALE = 220;
 const SYNAPTIC_DELAY_STEPS = Math.round(1.8 / STEP_MS);
-const FRAME_STEPS = Math.round(FRAME_MS / STEP_MS);
 export const LIVE_BRAIN_INTERVAL_MS = 100;
+const LIVE_SIMULATION_MS = 20;
 
 const outgoing = Array.from({ length: graph.neurons.length }, () => []);
-for (const edge of graph.edges) outgoing[edge.source].push(edge);
+for (const edge of graph.edges) outgoing[edge.source]?.push(edge);
+const STEERING_LEFT = graph.steering.filter((cell) => cell.side === "left").map((cell) => cell.index);
+const STEERING_RIGHT = graph.steering.filter((cell) => cell.side === "right").map((cell) => cell.index);
 
 function seededRandom(seed) {
   let state = seed >>> 0 || 1;
@@ -34,12 +34,26 @@ function seededRandom(seed) {
   };
 }
 
-function sensoryRate(danger, fatigue) {
-  return Math.round(Math.max(15, Math.min(150, 30 + Math.max(0, Math.min(1, danger)) * 110 - Math.max(0, Math.min(1, fatigue)) * 35)));
+const clamp = (value, min, max) => Math.max(min, Math.min(max, value));
+
+function ratesForMarket(features = {}) {
+  const momentumPercent = Number.isFinite(features.momentumPercent) ? features.momentumPercent : 0;
+  const volatilityPercent = Number.isFinite(features.volatilityPercent) ? features.volatilityPercent : 0.02;
+  const normalizedMomentum = clamp(momentumPercent / Math.max(volatilityPercent, 0.003), -1, 1);
+  const volatilityDrive = clamp(volatilityPercent / 0.08, 0, 1);
+  const base = 30 + volatilityDrive * 28;
+  return {
+    left: Math.round(base + Math.max(0, -normalizedMomentum) * 68),
+    right: Math.round(base + Math.max(0, normalizedMomentum) * 68),
+    reward: Math.round(12 + Math.max(0, normalizedMomentum) * 18),
+    punishment: Math.round(10 + volatilityDrive * 18 + Math.max(0, -normalizedMomentum) * 12),
+    normalizedMomentum,
+    volatilityDrive,
+  };
 }
 
-// One persistent solver serves both the sealed round readout and live sensory
-// activity. Membranes, synaptic currents, delays and PRNG state survive advances.
+// A connectome-constrained LIF population. Only neurons in the selected
+// FlyWire subgraph are solved; the remaining anatomical cloud is context.
 function createSimulator(seed) {
   const random = seededRandom(seed);
   const voltage = new Float64Array(graph.neurons.length).fill(RESTING_MV);
@@ -57,25 +71,22 @@ function createSimulator(seed) {
     spikeCounts[index] += 1;
     spikeCount += 1;
     active.add(index);
-    if (external) {
-      voltage[index] = RESET_MV;
-      conductance[index] = 0;
-    } else {
-      voltage[index] = RESET_MV;
-      conductance[index] = 0;
-      refractoryUntil[index] = step + Math.ceil(REFRACTORY_MS / STEP_MS);
-    }
+    voltage[index] = RESET_MV;
+    conductance[index] = 0;
+    if (!external) refractoryUntil[index] = step + Math.ceil(REFRACTORY_MS / STEP_MS);
     const slot = (step + SYNAPTIC_DELAY_STEPS) % delayed.length;
-    for (const edge of outgoing[index]) {
-      delayed[slot].push([edge.target, edge.weight * WEIGHT_PER_SYNAPSE_MV]);
-    }
+    for (const edge of outgoing[index]) delayed[slot].push([edge.target, edge.weight * WEIGHT_PER_SYNAPSE_MV]);
   }
 
-  function advance(sourceSide, inputRateHz) {
-    const stimulated = graph.input[sourceSide];
-    const poissonChance = inputRateHz * STEP_MS / 1000;
+  function advance(inputRates, durationMs = FRAME_MS) {
+    const rates = [
+      [graph.input.left, inputRates.left],
+      [graph.input.right, inputRates.right],
+      [graph.input.reward ?? [], inputRates.reward],
+      [graph.input.punishment ?? [], inputRates.punishment],
+    ];
     const active = new Set();
-    const until = step + FRAME_STEPS;
+    const until = step + Math.round(durationMs / STEP_MS);
     for (; step < until; step++) {
       const pending = delayed[step % delayed.length];
       for (const [index, weight] of pending) conductance[index] += weight;
@@ -88,10 +99,13 @@ function createSimulator(seed) {
         if (voltage[index] >= THRESHOLD_MV) emitSpike(index, active);
       }
 
-      for (const index of stimulated) {
-        if (random() < poissonChance) {
-          voltage[index] += WEIGHT_PER_SYNAPSE_MV * VISUAL_STIMULUS_SCALE;
-          if (voltage[index] >= THRESHOLD_MV) emitSpike(index, active, true);
+      for (const [stimulated, rate] of rates) {
+        const poissonChance = rate * STEP_MS / 1000;
+        for (const index of stimulated) {
+          if (random() < poissonChance) {
+            voltage[index] += WEIGHT_PER_SYNAPSE_MV * VISUAL_STIMULUS_SCALE;
+            if (voltage[index] >= THRESHOLD_MV) emitSpike(index, active, true);
+          }
         }
       }
     }
@@ -101,9 +115,6 @@ function createSimulator(seed) {
   function strongestPotentials() {
     const cells = [];
     for (let index = 0; index < voltage.length; index++) {
-      if (!Number.isFinite(voltage[index]) || !Number.isFinite(conductance[index])) {
-        throw new Error(`Non-finite LIF state at neuron ${index}.`);
-      }
       if (voltage[index] > RESTING_MV + 0.01) cells.push({ index, millivolts: Math.round(voltage[index] * 100) / 100 });
     }
     return cells.sort((a, b) => b.millivolts - a.millivolts).slice(0, 12);
@@ -119,60 +130,74 @@ function createSimulator(seed) {
   };
 }
 
-function simulate(scenario) {
-  const simulator = createSimulator(scenario.seed);
-  const sourceSide = (scenario.seed & 1) === 0 ? "left" : "right";
-  const inputRateHz = sensoryRate(scenario.danger, scenario.fatigue);
+function decodeSteering(spikeCounts, rates) {
+  const mean = (indices) => indices.length ? indices.reduce((sum, index) => sum + spikeCounts[index], 0) / indices.length : 0;
+  const leftSteeringHz = mean(STEERING_LEFT) * 1000 / DURATION_MS;
+  const rightSteeringHz = mean(STEERING_RIGHT) * 1000 / DURATION_MS;
+  const steeringMarginHz = leftSteeringHz - rightSteeringHz;
+  // The game's paper mapping treats a right-biased descending output as LONG
+  // and a left-biased output as SHORT. If neither output fires, the stronger
+  // market-sensory channel breaks the tie in the same direction.
+  const usedSensoryFallback = Math.abs(steeringMarginHz) < 0.001;
+  const side = usedSensoryFallback
+    ? (rates.right >= rates.left ? "long" : "short")
+    : (steeringMarginHz > 0 ? "short" : "long");
+  return { side, leftSteeringHz, rightSteeringHz, steeringMarginHz, usedSensoryFallback };
+}
+
+function runDecision(seed, features = {}) {
+  const simulator = createSimulator(seed);
+  const rates = ratesForMarket(features);
   const frames = [];
-  for (let elapsed = 0; elapsed < DURATION_MS; elapsed += FRAME_MS) {
-    frames.push(simulator.advance(sourceSide, inputRateHz));
-  }
-  const { spikeCounts } = simulator;
-  const steering = graph.steering.map(({ index, type, side }) => ({
-    type,
-    side,
-    spikes: spikeCounts[index],
-  }));
-  const leftSteeringHz = steering.filter((cell) => cell.side === "left").reduce((sum, cell) => sum + cell.spikes, 0) * 1000 / DURATION_MS;
-  const rightSteeringHz = steering.filter((cell) => cell.side === "right").reduce((sum, cell) => sum + cell.spikes, 0) * 1000 / DURATION_MS;
-  const escapeDriveHz = leftSteeringHz + rightSteeringHz;
-  const allActive = [...spikeCounts]
+  for (let elapsed = 0; elapsed < DURATION_MS; elapsed += FRAME_MS) frames.push(simulator.advance(rates));
+  const neuralReadout = decodeSteering(simulator.spikeCounts, rates);
+  const allActive = [...simulator.spikeCounts]
     .map((spikes, index) => ({ index, spikes }))
     .filter((cell) => cell.spikes > 0)
     .sort((a, b) => b.spikes - a.spikes);
-  const active = allActive
-    .slice(0, 18)
-    .map(({ index, spikes }) => ({ index, id: graph.neurons[index].id, spikes, type: graph.neurons[index].type, side: graph.neurons[index].side }));
-
+  const active = allActive.slice(0, 28).map(({ index, spikes }) => ({
+    index, id: graph.neurons[index].id, spikes, type: graph.neurons[index].type, side: graph.neurons[index].side,
+  }));
+  const side = neuralReadout.side;
+  const action = side === "long" ? "dive" : "dodge";
   return {
-    sourceSide,
-    inputRateHz,
-    durationMs: DURATION_MS,
-    activeNeuronCount: allActive.length,
-    active,
-    frames,
-    readout: { leftSteeringHz, rightSteeringHz, escapeDriveHz },
+    side,
+    action,
+    outcome: "liquidated",
+    multiplier: 0,
+    neural: {
+      side,
+      sourceSide: rates.left === rates.right ? "bilateral" : rates.left > rates.right ? "left" : "right",
+      inputRatesHz: { left: rates.left, right: rates.right, reward: rates.reward, punishment: rates.punishment },
+      marketInput: {
+        momentumPercent: Number((features.momentumPercent ?? 0).toFixed(5)),
+        volatilityPercent: Number((features.volatilityPercent ?? 0).toFixed(5)),
+        normalizedMomentum: Number(rates.normalizedMomentum.toFixed(3)),
+      },
+      durationMs: DURATION_MS,
+      activeNeuronCount: allActive.length,
+      active,
+      frames,
+      readout: neuralReadout,
+    },
   };
 }
 
-// This stream models an ongoing, moving visual stimulus independently of the
-// sealed game scenario. Never seed it from scenario.seed: public activity must
-// not publish the precomputed outcome trace while betting is open.
+// Public activity is deliberately unrelated to the sealed trade-side trace.
 export function createLiveBrain(roundId, seed) {
   const simulator = createSimulator(seed);
-  const phase = ((seed >>> 0) % 6283) / 1000;
   let sequence = 0;
-  let sourceSide = (seed & 1) === 0 ? "left" : "right";
-  let inputRateHz = 65;
+  const inputRatesHz = ratesForMarket({ momentumPercent: 0.01, volatilityPercent: 0.03 });
+  const sourceSide = inputRatesHz.left === inputRatesHz.right ? "bilateral" : inputRatesHz.left > inputRatesHz.right ? "left" : "right";
   function frame(active) {
     return {
       roundId,
       sequence,
       simulatedMs: simulator.simulatedMs,
-      frameMs: FRAME_MS,
-      playbackRate: FRAME_MS / LIVE_BRAIN_INTERVAL_MS,
+      frameMs: LIVE_SIMULATION_MS,
+      playbackRate: LIVE_SIMULATION_MS / LIVE_BRAIN_INTERVAL_MS,
       sourceSide,
-      inputRateHz,
+      inputRateHz: Math.round((inputRatesHz.left + inputRatesHz.right) / 2),
       active,
       potentials: simulator.strongestPotentials(),
       spikeCount: simulator.spikeCount,
@@ -183,27 +208,13 @@ export function createLiveBrain(roundId, seed) {
   return {
     initialFrame: frame([]),
     advance() {
-      // Slow visual input changes evoke fresh, propagating responses each frame.
-      const stimulusPosition = Math.sin(simulator.simulatedMs / 210 + phase);
-      sourceSide = stimulusPosition >= 0 ? "left" : "right";
-      inputRateHz = Math.round(55 + Math.abs(stimulusPosition) * 65);
-      const active = simulator.advance(sourceSide, inputRateHz);
+      const active = simulator.advance(inputRatesHz, LIVE_SIMULATION_MS);
       sequence += 1;
       return frame(active);
     },
   };
 }
 
-export function decideWithConnectome(scenario) {
-  const neural = simulate(scenario);
-  const action = neural.readout.escapeDriveHz >= STEERING_READOUT_THRESHOLD_HZ ? "dodge" : "dive";
-  const survived = action === "dodge" ? scenario.danger < 0.9 : scenario.danger < 0.46;
-  const profitable = action === "dive" && scenario.opportunity >= 0.56;
-  const outcome = survived && (action === "dodge" || profitable) ? "epic_gains" : "liquidated";
-  return {
-    action,
-    outcome,
-    multiplier: outcome === "epic_gains" ? Number((1 + scenario.opportunity * 4.5).toFixed(2)) : 0,
-    neural,
-  };
+export function decideWithConnectome(scenario, marketFeatures = {}) {
+  return runDecision(scenario.seed, marketFeatures);
 }

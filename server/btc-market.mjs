@@ -176,10 +176,30 @@ export function createBtcMarketFeed() {
     return price > reference ? "long" : "short";
   }
 
+  function marketFeaturesAt(timestamp) {
+    const recent = ticks.filter((tick) => tick.time <= timestamp && tick.time >= timestamp - 60_000);
+    const first = recent[0], last = recent[recent.length - 1];
+    const momentumPercent = first && last && first.price > 0 ? ((last.price - first.price) / first.price) * 100 : 0;
+    const returns = [];
+    for (let index = 1; index < recent.length; index++) {
+      const previous = recent[index - 1].price, current = recent[index].price;
+      if (previous > 0 && current > 0) returns.push(Math.log(current / previous) * 100);
+    }
+    const average = returns.length ? returns.reduce((sum, value) => sum + value, 0) / returns.length : 0;
+    const volatilityPercent = returns.length
+      ? Math.sqrt(returns.reduce((sum, value) => sum + (value - average) ** 2, 0) / returns.length) * Math.sqrt(returns.length)
+      : 0.02;
+    return {
+      momentumPercent: Number(momentumPercent.toFixed(6)),
+      volatilityPercent: Number(Math.max(0.003, volatilityPercent).toFixed(6)),
+      lookbackSeconds: first ? Math.round((timestamp - first.time) / 1000) : 0,
+    };
+  }
+
   function prepareTrade() {
     const latest = ticks[ticks.length - 1];
     if (!latest || Date.now() - latest.time > 12_000) return null;
-    return { side: directionFor(latest.price, latest.time), entryPrice: latest.price, entryAt: latest.time, exitPrice: null, exitAt: null, pnlPercent: null, status: "open" };
+    return { side: null, entryPrice: latest.price, entryAt: latest.time, marketFeatures: marketFeaturesAt(latest.time), exitPrice: null, exitAt: null, pnlPercent: null, status: "open" };
   }
 
   function dispose() {
@@ -190,5 +210,5 @@ export function createBtcMarketFeed() {
 
   void loadHistory();
   connect();
-  return { snapshot, priceAt, recoverPriceAt, directionFor, prepareTrade, dispose };
+  return { snapshot, priceAt, recoverPriceAt, directionFor, marketFeaturesAt, prepareTrade, dispose };
 }

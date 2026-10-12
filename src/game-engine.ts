@@ -29,14 +29,16 @@ export interface BrainTrace {
 
 /** Connectome simulation trace returned by the shared round server after lock. */
 export interface NeuralActivity {
-  sourceSide: "left" | "right";
-  inputRateHz: number;
+  side: "long" | "short";
+  sourceSide: "left" | "right" | "bilateral";
+  inputRatesHz: { left: number; right: number; reward: number; punishment: number };
+  marketInput: { momentumPercent: number; volatilityPercent: number; normalizedMomentum: number };
   durationMs: number;
   activeNeuronCount: number;
   active: Array<{ index: number; id: string; spikes: number; type: string; side: string }>;
   /** Each frame contains FlyWire node indexes that spiked during that interval. */
   frames: number[][];
-  readout: { leftSteeringHz: number; rightSteeringHz: number; escapeDriveHz: number };
+  readout: { side: "long" | "short"; leftSteeringHz: number; rightSteeringHz: number; steeringMarginHz: number; usedSensoryFallback: boolean };
 }
 
 export interface FlyDecision {

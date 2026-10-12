@@ -367,9 +367,6 @@ button { color: inherit; }
 .neural-cloud-scene .brain-cloud-canvas { display: block; width: 100%; height: 100%; touch-action: none; cursor: grab; }
 .neural-cloud-scene .brain-cloud-canvas:active { cursor: grabbing; }
 .neural-cloud-scene .brain-cloud-canvas:focus-visible { outline: 1px solid #99d6bd; outline-offset: -3px; }
-.neural-scene-caption { position: absolute; top: 11px; left: 11px; display: grid; gap: 5px; max-width: calc(100% - 150px); pointer-events: none; }
-.neural-scene-caption span { color: #c1d8cc; font: 7px var(--mono); letter-spacing: .02em; }
-.neural-scene-caption small { max-width: 124px; color: #6f8c7e; font: 6px/1.55 var(--mono); }
 .neural-toolbar { position: absolute; top: 9px; right: 9px; display: flex; gap: 2px; padding: 2px; border: 1px solid #304237; border-radius: 5px; background: #08120de8; }
 .neural-toolbar button { display: grid; place-items: center; width: 23px; height: 24px; padding: 3px; border: 0; border-radius: 3px; background: transparent; color: #a6c1ae; cursor: pointer; }
 .neural-toolbar button:hover, .neural-toolbar button[aria-pressed="true"] { background: #9dd9901c; color: #d4fac3; }
@@ -393,7 +390,6 @@ button { color: inherit; }
 .neural-stat b { color: #deefd4; font: 12px var(--mono); white-space: nowrap; font-variant-numeric: tabular-nums; }
 .neural-stat small { color: #728b75; font-size: 8px; }
 .neural-active-list { margin: 10px 12px 0; }
-.neural-list-label { display: block; margin-bottom: 6px; color: #899b85; font: 7px var(--mono); }
 .neural-firing-cells { display: flex; align-items: center; flex-wrap: wrap; gap: 4px; min-height: 25px; }
 .neural-cell { display: inline-flex; align-items: center; gap: 5px; max-width: 115px; min-height: 23px; padding: 4px 6px; border: 1px solid #304733; border-radius: 4px; background: #0b1b10; color: #c3dfbc; font: 8px var(--mono); cursor: pointer; }
 .neural-cell > i { width: 4px; height: 4px; flex: none; border-radius: 50%; background: #c2fd93; box-shadow: 0 0 7px #b7ff6260; }
@@ -420,8 +416,6 @@ button { color: inherit; }
 .neural-panel:fullscreen { inset: 0; width: 100%; height: 100%; border: 0; border-radius: 0; }
 .neural-panel.is-expanded .neural-cloud-scene { flex: 1 0 280px; height: calc(100dvh - 340px); min-height: 280px; }
 .neural-panel.is-expanded .neural-region-legend button { min-height: 21px; font-size: 9px; }
-.neural-panel.is-expanded .neural-scene-caption span { font-size: 10px; }
-.neural-panel.is-expanded .neural-scene-caption small { max-width: none; font-size: 8px; }
 .neural-panel.is-expanded .neural-toolbar button { width: 31px; height: 30px; }
 .neural-panel.is-expanded .neural-toolbar svg { width: 17px; height: 17px; }
 .neural-panel.is-expanded .neural-readout { grid-template-columns: minmax(0, 180px); }
@@ -529,7 +523,6 @@ body { background: radial-gradient(ellipse at 47% -32%, #6cddcb12, transparent 4
 .sim-heading { padding: 0 1px 16px; }
 .sim-title { display: flex; align-items: center; gap: 13px; }
 .swarm-glyph { width: 38px; height: 38px; display: grid; place-items: center; border: 1px solid #72dfcc38; border-radius: 12px; background: #72dfcc0d; color: var(--green); font-size: 20px; box-shadow: inset 0 0 20px #72dfcc0a; }
-.sim-title .eyebrow { margin-bottom: 6px; }
 .sim-heading h1 { margin: 0; color: #eaf1ef; font-size: clamp(20px, 2.2vw, 27px); font-weight: 550; letter-spacing: -.055em; }
 .sim-countdown { min-width: 100px; padding: 9px 12px; border: 1px solid #ffffff10; border-radius: 9px; background: #ffffff04; }
 .sim-countdown small { color: #71807f; font-size: 7px; letter-spacing: .13em; }
@@ -556,37 +549,15 @@ body { background: radial-gradient(ellipse at 47% -32%, #6cddcb12, transparent 4
 .btc-chart-state { border-color: #ffffff17; border-radius: 8px; background: #0c1213e6; color: #adbab7; font-size: 8px; }
 .field-progress { height: 2px; background: #ffffff0c; }
 .field-progress i { background: var(--green); box-shadow: 0 0 9px #72dfcc90; }
-.signal-node { position: absolute; z-index: 4; top: 48%; right: 7%; display: grid; justify-items: center; gap: 6px; min-width: 82px; transform: translateY(-50%); pointer-events: none; }
-.signal-orbit { position: relative; width: 62px; height: 62px; display: grid; place-items: center; border: 1px solid #72dfcc4b; border-radius: 50%; background: radial-gradient(circle, #72dfcc10, #0a1110c9 67%); box-shadow: 0 0 30px #72dfcc0b, inset 0 0 18px #72dfcc0a; }
-.signal-orbit::before, .signal-orbit::after { content: ""; position: absolute; border: 1px solid #72dfcc25; border-radius: 50%; }
-.signal-orbit::before { inset: 6px; border-style: dashed; animation: signal-orbit-spin 18s linear infinite; }
-.signal-orbit::after { inset: -5px; border-color: #72dfcc16; }
-.signal-orbit i { position: absolute; top: 5px; right: 9px; width: 5px; height: 5px; border-radius: 50%; background: #a8efe4; box-shadow: 0 0 9px #72dfcc; animation: signal-pulse 2.2s ease-in-out infinite; }
-.signal-orbit b { color: #a1ece0; font: 500 20px var(--mono); text-shadow: 0 0 14px #72dfcc55; }
-.signal-node small { color: #70807d; font: 600 6px var(--mono); letter-spacing: .12em; }
-.signal-node strong { color: #bfd4cf; font: 600 8px var(--mono); letter-spacing: .08em; }
-.signal-short .signal-orbit { border-color: #b7c5c133; }
-.signal-short .signal-orbit::before { border-color: #b7c5c126; }
-.signal-short .signal-orbit i { background: #b7c5c1; box-shadow: 0 0 8px #b7c5c166; }
-.signal-short .signal-orbit b, .signal-short strong { color: #c3d0cd; }
-.signal-idle .signal-orbit { border-color: #ffffff26; }
-.signal-idle .signal-orbit::before { border-color: #ffffff16; }
-.signal-idle .signal-orbit b { color: #aab7b3; }
-@keyframes signal-orbit-spin { to { transform: rotate(1turn); } }
-@keyframes signal-pulse { 50% { opacity: .4; box-shadow: 0 0 2px #72dfcc; } }
 .trade-status-card { margin-top: 14px; padding: 13px 14px 11px; border: 1px solid #ffffff10; border-radius: 10px; background: linear-gradient(115deg, #ffffff05, #72dfcc04); }
 .trade-status-card.is-loss { background: linear-gradient(115deg, #ffffff05, #ffffff02); }
 .trade-status-main { display: flex; align-items: center; gap: 10px; }
 .trade-state-icon { width: 28px; height: 28px; display: grid; place-items: center; border: 1px solid #ffffff17; border-radius: 9px; color: #899693; font-size: 15px; }
 .trade-state-icon.is-live, .trade-state-icon.is-done { border-color: #72dfcc35; background: #72dfcc0c; color: #8ee5d7; }
 .trade-status-main > div { min-width: 0; display: grid; gap: 4px; }
-.trade-status-main small { color: #71807e; font: 600 7px var(--mono); letter-spacing: .12em; }
+.trade-status-main small { color: #71807e; font: 600 7px var(--mono); letter-spacing: .1em; }
 .trade-status-main b { overflow: hidden; color: #dce6e3; font-size: 10px; font-weight: 550; text-overflow: ellipsis; white-space: nowrap; }
 .trade-round { margin-left: auto; color: #788482; font: 8px var(--mono); }
-.trade-stage-line { display: flex; align-items: center; gap: 8px; margin: 13px 0 12px 38px; color: #596461; font: 600 7px var(--mono); letter-spacing: .05em; }
-.trade-stage-line span.is-active { color: #a5e9df; }
-.trade-stage-line i { flex: 1; height: 1px; background: #283330; }
-.trade-stage-line i.is-active { background: #72dfcc6c; }
 .trade-metrics { display: grid; grid-template-columns: repeat(3, minmax(0, 1fr)); padding-top: 10px; border-top: 1px solid #ffffff0b; }
 .trade-metrics > div { display: grid; gap: 5px; }
 .trade-metrics > div + div { padding-left: 12px; border-left: 1px solid #ffffff0b; }
@@ -594,19 +565,16 @@ body { background: radial-gradient(ellipse at 47% -32%, #6cddcb12, transparent 4
 .trade-metrics b { overflow: hidden; color: #dce5e2; font: 550 11px var(--mono); text-overflow: ellipsis; white-space: nowrap; }
 .trade-metrics b.is-positive { color: #91e5d8; }
 .trade-metrics b.is-negative { color: #bac3c1; }
-.trade-cost-note { display: block; margin-top: 9px; color: #6e7d79; font: 7px var(--mono); }
 .sim-footer { min-height: 36px; color: #657370; font: 7px var(--mono); }
 .sim-footer .pulse-dot { background: var(--green); box-shadow: 0 0 8px #72dfcc80; }
 .neural-panel { padding-bottom: 12px; }
 .neural-panel .neural-heading { min-height: 60px; padding: 12px 17px; }
-.neural-heading h2 { color: #e1ebe8; font-size: 15px; font-weight: 550; }
+.neural-heading h2 { margin-top: 0; color: #e1ebe8; font-size: 15px; font-weight: 550; }
 .neural-version { border-color: #ffffff18; color: #8bbdb3; }
 .neural-state { color: #899794; font-size: 7px; }
 .neural-state.is-live { color: #9be8dc; }
 .neural-state.is-live i { background: #72dfcc; box-shadow: 0 0 8px #72dfcc88; }
 .neural-cloud-scene { height: clamp(260px, 26vw, 340px); margin: 0 12px; border-color: #ffffff10; border-radius: 10px; background: #070c0c; }
-.neural-scene-caption span { color: #b3c3c0; font: 600 7px var(--mono); }
-.neural-scene-caption small { display: none; }
 .neural-toolbar { border-color: #ffffff18; border-radius: 7px; background: #0b1110d9; backdrop-filter: blur(8px); }
 .neural-toolbar button { color: #9aaaa6; }
 .neural-toolbar button:hover, .neural-toolbar button[aria-pressed="true"] { background: #72dfcc18; color: #b6f4ea; }
@@ -621,7 +589,6 @@ body { background: radial-gradient(ellipse at 47% -32%, #6cddcb12, transparent 4
 .neural-stat b { justify-self: end; color: #dbe8e4; font: 550 11px var(--mono); }
 .neural-stat small { color: #697875; }
 .neural-active-list { margin: 9px 14px 0; }
-.neural-list-label { margin-bottom: 5px; color: #76837f; font: 600 7px var(--mono); }
 .neural-firing-cells { gap: 5px; }
 .neural-cell { min-height: 22px; padding: 3px 7px; border-color: #ffffff16; border-radius: 6px; background: #ffffff04; color: #b8c8c4; font: 7px var(--mono); }
 .neural-cell > i { background: #83e4d5; box-shadow: 0 0 7px #72dfcc70; }
@@ -729,10 +696,7 @@ body { background: radial-gradient(ellipse at 47% -32%, #6cddcb12, transparent 4
   .sim-countdown { min-width: 77px; padding: 7px 8px; }
   .sim-countdown b { font-size: 11px; }
   .flight-field { height: min(78vw, 390px); min-height: 290px; }
-  .signal-node { right: 4%; }
-  .signal-orbit { width: 52px; height: 52px; }
   .trade-status-card { padding: 11px 10px; }
-  .trade-stage-line { margin-left: 37px; gap: 5px; font-size: 6px; }
   .trade-metrics > div + div { padding-left: 8px; }
   .trade-metrics b { font-size: 9px; }
   .neural-cloud-scene { height: min(74vw, 330px); min-height: 250px; }

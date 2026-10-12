@@ -5,7 +5,7 @@ export interface BrainLiveFrame {
   simulatedMs: number;
   frameMs: number;
   playbackRate: number;
-  sourceSide: "left" | "right";
+  sourceSide: "left" | "right" | "bilateral";
   inputRateHz: number;
   active: number[];
   potentials: Array<{ index: number; millivolts: number }>;

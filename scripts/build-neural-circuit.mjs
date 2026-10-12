@@ -1,4 +1,4 @@
-import { createWriteStream, existsSync, readFileSync } from "node:fs";
+import { createWriteStream, existsSync, readFileSync, writeFileSync } from "node:fs";
 import { mkdir } from "node:fs/promises";
 import { resolve } from "node:path";
 import { Readable } from "node:stream";
@@ -28,154 +28,188 @@ await downloadIfMissing(connectomePath, connectomeUrl);
 await downloadIfMissing(annotationsPath, annotationsUrl);
 
 const lines = readFileSync(annotationsPath, "utf8").trimEnd().split(/\r?\n/);
-const columns = lines[0].split("\t");
-const columnIndex = Object.fromEntries([
-  "root_id", "super_class", "cell_class", "cell_sub_class", "cell_type", "top_nt", "side", "pos_x", "pos_y", "pos_z", "soma_x", "soma_y", "soma_z",
-].map((name) => [name, columns.indexOf(name)]));
-if (Object.values(columnIndex).some((index) => index < 0)) throw new Error("The FlyWire annotation table is missing expected columns.");
+const headers = lines[0].split("\t");
+const columns = Object.fromEntries(["root_id", "super_class", "cell_class", "cell_sub_class", "cell_type", "top_nt", "side"].map((key) => [key, headers.indexOf(key)]));
+if (Object.values(columns).some((index) => index < 0)) throw new Error("The FlyWire annotation table is missing expected columns.");
 
 const neurons = new Map();
-const inputsBySide = { left: [], right: [] };
-const aotu = new Set();
-const steeringNeurons = new Set();
+const populations = { lc10: new Set(), aotu: new Set(), cx: new Set(), kc: new Set(), mbon: new Set(), dan: new Set(), mbin: new Set(), dn: new Set() };
 for (const line of lines.slice(1)) {
   const row = line.split("\t");
-  const id = row[columnIndex.root_id];
-  const type = row[columnIndex.cell_type];
-  const side = row[columnIndex.side]?.toLowerCase();
-  const neuron = {
-    id,
-    type: type || row[columnIndex.cell_class] || row[columnIndex.super_class] || "neuron",
-    superClass: row[columnIndex.super_class] || "unknown",
-    cellClass: row[columnIndex.cell_class] || "",
-    transmitter: row[columnIndex.top_nt] || "unknown",
-    side: side === "right" ? "right" : "left",
-    x: Number(row[columnIndex.soma_x]) || Number(row[columnIndex.pos_x]) || 0,
-    y: Number(row[columnIndex.soma_y]) || Number(row[columnIndex.pos_y]) || 0,
-    z: Number(row[columnIndex.soma_z]) || Number(row[columnIndex.pos_z]) || 0,
-  };
+  const id = row[columns.root_id];
+  const type = row[columns.cell_type] || row[columns.cell_class] || row[columns.super_class] || "neuron";
+  const cellClass = row[columns.cell_class] || "";
+  const side = row[columns.side]?.toLowerCase() === "right" ? "right" : "left";
+  const neuron = { id, type, superClass: row[columns.super_class] || "unknown", cellClass, transmitter: row[columns.top_nt] || "unknown", side };
   neurons.set(id, neuron);
-  if (type === "LC10a") inputsBySide[neuron.side].push(id);
-  if (type === "AOTU019" || type === "AOTU025") aotu.add(id);
-  if (["DNa01", "DNa02", "DNa03", "DNa04", "DNa11"].includes(type)) steeringNeurons.add(id);
+  if (/^LC10/.test(type)) populations.lc10.add(id);
+  if (/^AOTU/.test(type)) populations.aotu.add(id);
+  if (cellClass === "CX") populations.cx.add(id);
+  if (cellClass === "Kenyon_Cell") populations.kc.add(id);
+  if (cellClass === "MBON") populations.mbon.add(id);
+  if (cellClass === "DAN") populations.dan.add(id);
+  if (cellClass === "MBIN") populations.mbin.add(id);
+  if (/^DN/.test(type)) populations.dn.add(id);
 }
 
-if (!inputsBySide.left.length || !inputsBySide.right.length || !aotu.size || !steeringNeurons.size) {
-  throw new Error("Could not find the LC10a → AOTU → steering-neuron labels in the FlyWire annotations.");
-}
-
-const inputIds = new Set([...inputsBySide.left, ...inputsBySide.right]);
-const inputEdges = [];
-const aotuInputEdges = [];
-const aotuOutputEdges = [];
-const steeringInputEdges = [];
+const edges = { fromLc10: [], intoAotu: [], aotuToCx: [], cxInternal: [], cxToDn: [], cxToKc: [], kcToMbon: [], mbonToDn: [], danToKc: [], mbinToKc: [] };
 const file = await asyncBufferFromFile(connectomePath);
 const metadata = await parquetMetadataAsync(file);
 let rowStart = 0;
-
 for (const group of metadata.row_groups) {
   const groupEnd = rowStart + Number(group.num_rows);
   const buffers = {};
   await parquetRead({
-    file,
-    metadata,
+    file, metadata,
     columns: ["Presynaptic_ID", "Postsynaptic_ID", "Connectivity", "Excitatory x Connectivity"],
-    rowStart,
-    rowEnd: groupEnd,
-    compressors,
+    rowStart, rowEnd: groupEnd, compressors,
     onChunk: ({ columnName, columnData }) => { buffers[columnName] = columnData; },
   });
-
-  const presynaptic = buffers.Presynaptic_ID;
-  const postsynaptic = buffers.Postsynaptic_ID;
-  const synapses = buffers.Connectivity;
-  const signedWeight = buffers["Excitatory x Connectivity"];
-  for (let index = 0; index < presynaptic.length; index++) {
-    const pre = String(presynaptic[index]);
-    const post = String(postsynaptic[index]);
-    const count = Number(synapses[index]);
-    if (count < MIN_SYNAPSES) continue;
-    const row = { pre, post, synapses: count, weight: Number(signedWeight[index]) };
-    if (inputIds.has(pre)) inputEdges.push(row);
-    if (aotu.has(post)) aotuInputEdges.push(row);
-    if (aotu.has(pre)) aotuOutputEdges.push(row);
-    if (steeringNeurons.has(post)) steeringInputEdges.push(row);
+  const preColumn = buffers.Presynaptic_ID, postColumn = buffers.Postsynaptic_ID;
+  const countColumn = buffers.Connectivity, weightColumn = buffers["Excitatory x Connectivity"];
+  for (let index = 0; index < preColumn.length; index++) {
+    const pre = String(preColumn[index]), post = String(postColumn[index]), synapses = Number(countColumn[index]);
+    if (synapses < MIN_SYNAPSES) continue;
+    const edge = { pre, post, synapses, weight: Number(weightColumn[index]) };
+    if (populations.lc10.has(pre)) edges.fromLc10.push(edge);
+    if (populations.aotu.has(post)) edges.intoAotu.push(edge);
+    if (populations.aotu.has(pre) && populations.cx.has(post)) edges.aotuToCx.push(edge);
+    if (populations.cx.has(pre) && populations.cx.has(post)) edges.cxInternal.push(edge);
+    if (populations.cx.has(pre) && populations.dn.has(post)) edges.cxToDn.push(edge);
+    if (populations.cx.has(pre) && populations.kc.has(post)) edges.cxToKc.push(edge);
+    if (populations.kc.has(pre) && populations.mbon.has(post)) edges.kcToMbon.push(edge);
+    if (populations.mbon.has(pre) && populations.dn.has(post)) edges.mbonToDn.push(edge);
+    if (populations.dan.has(pre) && populations.kc.has(post)) edges.danToKc.push(edge);
+    if (populations.mbin.has(pre) && populations.kc.has(post)) edges.mbinToKc.push(edge);
   }
   rowStart = groupEnd;
   console.log(`Scanned ${rowStart.toLocaleString()} / ${Number(metadata.num_rows).toLocaleString()} connections`);
 }
 
-const inputMids = new Set(inputEdges.map((edge) => edge.post));
-const aotuMids = new Set(aotuInputEdges.map((edge) => edge.pre));
-const sharedMids = new Set([...inputMids].filter((id) => aotuMids.has(id)));
-let edges = [
-  ...inputEdges.filter((edge) => sharedMids.has(edge.post)),
-  ...aotuInputEdges.filter((edge) => sharedMids.has(edge.pre)),
+// Select only real, directed FlyWire edges that connect the visual input to
+// descending steering neurons. The central-complex segment is kept to cells
+// on a short measured path from AOTU input to a descending output.
+const lc10Targets = new Set(edges.fromLc10.map((edge) => edge.post));
+const aotuSources = new Set(edges.intoAotu.map((edge) => edge.pre));
+const sharedVisualMids = new Set([...lc10Targets].filter((id) => aotuSources.has(id)));
+const visualEdges = [
+  ...edges.fromLc10.filter((edge) => sharedVisualMids.has(edge.post) || populations.aotu.has(edge.post)),
+  ...edges.intoAotu.filter((edge) => sharedVisualMids.has(edge.pre)),
 ];
+const reachedAotu = new Set(visualEdges.flatMap((edge) => [edge.pre, edge.post]).filter((id) => populations.aotu.has(id)));
+for (const edge of edges.fromLc10) if (populations.aotu.has(edge.post)) visualEdges.push(edge);
+const uniqueVisualEdges = [...new Map(visualEdges.map((edge) => [`${edge.pre}:${edge.post}`, edge])).values()];
+const aotuOutput = edges.aotuToCx.filter((edge) => reachedAotu.has(edge.pre));
+const cxSeeds = new Set(aotuOutput.map((edge) => edge.post));
 
-const aotuOutputs = new Set(aotuOutputEdges.map((edge) => edge.post));
-const steeringInputs = new Set(steeringInputEdges.map((edge) => edge.pre));
-const sharedSteeringMids = new Set([...aotuOutputs].filter((id) => steeringInputs.has(id)));
-edges.push(
-  ...aotuOutputEdges.filter((edge) => sharedSteeringMids.has(edge.post)),
-  ...steeringInputEdges.filter((edge) => sharedSteeringMids.has(edge.pre)),
-);
-
-if (!edges.some((edge) => inputIds.has(edge.pre) && aotu.has(edge.post))) {
-  // Preserve any direct LC10a-to-AOTU edges even when their path does not need an intermediary.
-  edges.push(...inputEdges.filter((edge) => aotu.has(edge.post)));
+const cxForward = new Map(), cxReverse = new Map();
+for (const edge of edges.cxInternal) {
+  if (!cxForward.has(edge.pre)) cxForward.set(edge.pre, []);
+  if (!cxReverse.has(edge.post)) cxReverse.set(edge.post, []);
+  cxForward.get(edge.pre).push(edge.post);
+  cxReverse.get(edge.post).push(edge.pre);
 }
-if (!edges.length) throw new Error("No ≥5-synapse LC10a-to-steering paths were found in the selected connectome release.");
-
-const aggregated = new Map();
-for (const edge of edges) {
-  const key = `${edge.pre}:${edge.post}`;
-  const previous = aggregated.get(key);
-  if (previous) {
-    previous.synapses += edge.synapses;
-    previous.weight += edge.weight;
-  } else {
-    aggregated.set(key, { ...edge });
+function walk(seeds, adjacency, depth) {
+  const visited = new Set(seeds), frontier = new Set(seeds);
+  for (let hop = 0; hop < depth; hop++) {
+    const next = new Set();
+    for (const id of frontier) for (const target of adjacency.get(id) ?? []) if (!visited.has(target)) { visited.add(target); next.add(target); }
+    frontier.clear();
+    for (const id of next) frontier.add(id);
   }
+  return visited;
 }
-edges = [...aggregated.values()];
-const nodeIds = new Set([...inputIds, ...aotu, ...steeringNeurons]);
-for (const edge of edges) { nodeIds.add(edge.pre); nodeIds.add(edge.post); }
-const includedNeurons = [...nodeIds].map((id) => neurons.get(id)).filter(Boolean);
-const xValues = includedNeurons.map((neuron) => neuron.x).filter(Number.isFinite);
-const yValues = includedNeurons.map((neuron) => neuron.y).filter(Number.isFinite);
-const minX = Math.min(...xValues), maxX = Math.max(...xValues);
-const minY = Math.min(...yValues), maxY = Math.max(...yValues);
-const normalized = includedNeurons.map((neuron) => ({
-  ...neuron,
-  x: (neuron.x - minX) / Math.max(1, maxX - minX),
-  y: (neuron.y - minY) / Math.max(1, maxY - minY),
-}));
-const indexById = new Map(normalized.map((neuron, index) => [neuron.id, index]));
+const descendingSeeds = new Set(edges.cxToDn.map((edge) => edge.pre));
+const visuallyReachableCx = walk(cxSeeds, cxForward, 2);
+const descendingReachableCx = walk(descendingSeeds, cxReverse, 2);
+const relevantCx = new Set([...visuallyReachableCx].filter((id) => descendingReachableCx.has(id)));
+if (!relevantCx.size) for (const id of cxSeeds) relevantCx.add(id);
+const cxEdges = edges.cxInternal.filter((edge) => relevantCx.has(edge.pre) && relevantCx.has(edge.post));
+const cxOutputEdges = edges.cxToDn.filter((edge) => relevantCx.has(edge.pre));
+const cxInputEdges = aotuOutput.filter((edge) => relevantCx.has(edge.post));
+
+// Add the measured mushroom-body value branch only where it rejoins the same
+// descending output. It remains optional if the selected AOTU/CX cells do not
+// have a measured route through that branch in this connectome release.
+const cxKenyonEdges = edges.cxToKc.filter((edge) => relevantCx.has(edge.pre));
+const reachedKc = new Set(cxKenyonEdges.map((edge) => edge.post));
+const kenyonMbonEdges = edges.kcToMbon.filter((edge) => reachedKc.has(edge.pre));
+const reachedMbon = new Set(kenyonMbonEdges.map((edge) => edge.post));
+const mbonDescendingEdges = edges.mbonToDn.filter((edge) => reachedMbon.has(edge.pre));
+const connectedMbon = new Set(mbonDescendingEdges.map((edge) => edge.pre));
+const valueEdges = [
+  ...cxKenyonEdges.filter((edge) => kenyonMbonEdges.some((next) => next.pre === edge.post && connectedMbon.has(next.post))),
+  ...kenyonMbonEdges.filter((edge) => connectedMbon.has(edge.post)),
+  ...mbonDescendingEdges,
+];
+const valueKc = new Set(valueEdges.filter((edge) => populations.kc.has(edge.post) || populations.kc.has(edge.pre)).flatMap((edge) => [edge.pre, edge.post]).filter((id) => populations.kc.has(id)));
+const danToKc = edges.danToKc.filter((edge) => valueKc.has(edge.post));
+const mbinToKc = edges.mbinToKc.filter((edge) => valueKc.has(edge.post));
+const includedDan = new Set(danToKc.map((edge) => edge.pre));
+const includedMbin = new Set(mbinToKc.map((edge) => edge.pre));
+
+let selectedEdges = [...uniqueVisualEdges, ...cxInputEdges, ...cxEdges, ...cxOutputEdges, ...valueEdges, ...danToKc, ...mbinToKc];
+selectedEdges = [...new Map(selectedEdges.map((edge) => [`${edge.pre}:${edge.post}`, edge])).values()];
+if (!selectedEdges.length || !uniqueVisualEdges.length || !cxOutputEdges.length) throw new Error("No complete ≥5-synapse FlyWire path from LC10 visual input through central-complex output was found.");
+
+const nodeIds = new Set(selectedEdges.flatMap((edge) => [edge.pre, edge.post]));
+for (const id of reachedAotu) nodeIds.add(id);
+for (const id of relevantCx) nodeIds.add(id);
+for (const id of includedDan) nodeIds.add(id);
+for (const id of includedMbin) nodeIds.add(id);
+const included = [...nodeIds].map((id) => neurons.get(id)).filter(Boolean);
+const outputNeurons = included.map((neuron) => ({ id: neuron.id, type: neuron.type, superClass: neuron.superClass, cellClass: neuron.cellClass, transmitter: neuron.transmitter, side: neuron.side }));
+const indexById = new Map(outputNeurons.map((neuron, index) => [neuron.id, index]));
+const outputEdges = selectedEdges.map((edge) => ({ source: indexById.get(edge.pre), target: indexById.get(edge.post), synapses: edge.synapses, weight: edge.weight })).filter((edge) => edge.source !== undefined && edge.target !== undefined);
+const dnas = outputNeurons.map((neuron, index) => ({ index, type: neuron.type, side: neuron.side })).filter((neuron) => /^DN/.test(neuron.type));
+const groups = outputNeurons.map((neuron) => {
+  if (/^LC10/.test(neuron.type)) return "visual";
+  if (/^AOTU/.test(neuron.type)) return "visual_intermediate";
+  if (neuron.cellClass === "CX") return "central_complex";
+  if (neuron.cellClass === "Kenyon_Cell") return "mushroom_body";
+  if (neuron.cellClass === "MBON") return "mushroom_body_output";
+  if (neuron.cellClass === "DAN" || neuron.cellClass === "MBIN") return "modulatory";
+  if (/^DN/.test(neuron.type)) return "descending";
+  return "interneuron";
+});
+const leftInputTypes = new Set(outputNeurons.map((neuron, index) => neuron.side === "left" && /^LC10/.test(neuron.type) ? index : -1).filter((index) => index >= 0));
+const rightInputTypes = new Set(outputNeurons.map((neuron, index) => neuron.side === "right" && /^LC10/.test(neuron.type) ? index : -1).filter((index) => index >= 0));
+const rewardInput = [...includedDan].map((id) => indexById.get(id)).filter(Number.isInteger);
+const punishmentInput = [...includedMbin].map((id) => indexById.get(id)).filter(Number.isInteger);
+const steering = dnas.map(({ index, type, side }) => ({ index, type, side }));
 const output = {
   dataset: "FlyWire FAFB v783",
-  model: "Connectome-constrained leaky integrate-and-fire; Shiu et al. 2024 parameters",
-  pathway: "LC10a visual object detector → AOTU019/AOTU025 → DNa steering neurons",
+  model: "Connectome-constrained leaky integrate-and-fire prototype; Shiu et al. 2024 parameters",
+  pathway: "Measured LC10 family → AOTU → central-complex / descending cells, with connected mushroom-body modulation where present",
   minimumSynapses: MIN_SYNAPSES,
-  neurons: normalized,
-  edges: edges.map((edge) => ({
-    source: indexById.get(edge.pre),
-    target: indexById.get(edge.post),
-    synapses: edge.synapses,
-    weight: edge.weight,
-  })).filter((edge) => edge.source !== undefined && edge.target !== undefined),
+  neurons: outputNeurons,
+  edges: outputEdges,
+  neuronGroups: groups,
   input: {
-    left: inputsBySide.left.map((id) => indexById.get(id)).filter(Number.isInteger),
-    right: inputsBySide.right.map((id) => indexById.get(id)).filter(Number.isInteger),
+    left: [...leftInputTypes],
+    right: [...rightInputTypes],
+    reward: rewardInput,
+    punishment: punishmentInput,
   },
-  interneurons: normalized.map((neuron, index) => ({ index, type: neuron.type })).filter(({ type }) => type === "AOTU019" || type === "AOTU025").map(({ index }) => index),
-  steering: normalized.map((neuron, index) => ({ index, type: neuron.type, side: neuron.side })).filter(({ type }) => /^DNa/.test(type)).map(({ index, type, side }) => ({ index, type, side })),
+  steering,
   sources: {
     connectome: connectomeUrl,
     annotations: annotationsUrl,
     model: "https://www.nature.com/articles/s41586-024-07763-9",
   },
+  stats: {
+    visualInputs: leftInputTypes.size + rightInputTypes.size,
+    aotu: [...reachedAotu].filter((id) => nodeIds.has(id)).length,
+    centralComplex: relevantCx.size,
+    kenyonCells: valueKc.size,
+    mushroomBodyOutput: connectedMbon.size,
+    rewardCells: rewardInput.length,
+    punishmentCells: punishmentInput.length,
+    descending: steering.length,
+  },
 };
-
-await import("node:fs/promises").then(({ writeFile }) => writeFile(outputPath, JSON.stringify(output)));
-console.log(`Wrote ${output.neurons.length} neurons and ${output.edges.length} real FlyWire connections to ${outputPath}`);
+if (new Set(output.neurons.map((neuron) => neuron.id)).size !== output.neurons.length) throw new Error("Duplicate neuron IDs in selected circuit.");
+if (output.edges.some((edge) => !Number.isInteger(edge.source) || !Number.isInteger(edge.target) || !Number.isFinite(edge.weight))) throw new Error("Invalid circuit edge index or weight.");
+writeFileSync(outputPath, JSON.stringify(output));
+console.log(`Wrote ${output.neurons.length} measured FlyWire neurons and ${output.edges.length} real directed connections.`);
+console.log(JSON.stringify(output.stats, null, 2));

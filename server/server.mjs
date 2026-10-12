@@ -52,14 +52,23 @@ loadLocalEnv();
 
 function makeRound(id, deadline = Date.now() + BET_SECONDS * 1000, seed = randomBytes(4).readUInt32BE(0) || 1, trade = null) {
   const unit = (offset) => (((seed ^ (offset * 2246822519)) >>> 0) % 1000) / 1000;
-  const scenario = { roundId: id, danger: 0.22 + unit(3) * 0.72, opportunity: 0.24 + unit(7) * 0.72, fatigue: 0.12 + unit(11) * 0.74, seed };
-  const commitment = createHash("sha256").update(`${id}:${seed}:${scenario.danger}:${scenario.opportunity}:${scenario.fatigue}`).digest("hex");
+  const marketFeatures = trade?.marketFeatures ?? { momentumPercent: 0, volatilityPercent: 0.02 };
+  const scenario = {
+    roundId: id,
+    danger: Math.min(0.98, 0.22 + unit(3) * 0.45 + Math.min(0.3, marketFeatures.volatilityPercent * 2)),
+    opportunity: Math.min(0.98, 0.25 + unit(7) * 0.4 + Math.min(0.3, Math.abs(marketFeatures.momentumPercent) * 8)),
+    fatigue: 0.12 + unit(11) * 0.74,
+    seed,
+  };
+  const decision = decideWithConnectome(scenario, marketFeatures);
+  if (trade) trade = { ...trade, side: decision.neural.readout.side };
+  const commitment = createHash("sha256").update(JSON.stringify({ id, seed, scenario, marketFeatures, side: decision.neural.readout.side, model: "flywire-vision-v2" })).digest("hex");
   const now = Date.now();
   const brainSimulator = createLiveBrain(id, randomBytes(4).readUInt32BE(0) || 1);
   return {
     id, phase: trade ? "betting" : "waiting", deadline, scenario, commitment, trade,
     brainSimulator, brain: brainSimulator.initialFrame,
-    decision: decideWithConnectome(scenario), bets: new Map(), pools: { liquidated: 0, gains: 0 },
+    decision, bets: new Map(), pools: { liquidated: 0, gains: 0 },
     chat: [{ id: now, name: "swarm", text: `Shared round #${id} is open — fly brain is sealed.`, color: "#b7ff62" }],
     feed: [{ id: now + 1, text: `Shared round #${id} opened · ${BET_SECONDS}s betting window`, kind: "game" }],
   };
@@ -116,6 +125,16 @@ function nextRpcRetryDelay() {
   return Math.min(30_000, 5_000 * (2 ** Math.min(rpcFailureCount - 1, 3)));
 }
 
+function describeOperatorFailure(error, retrySeconds) {
+  const detail = error instanceof Error ? error.message : String(error ?? "Unknown error");
+  if (/insufficient balance|insufficient funds/i.test(detail)) {
+    const address = operatorWallet?.address ?? operatorStatus.address;
+    const wallet = address ? ` ${address}` : "";
+    return `Operator wallet${wallet} needs Monad Testnet MON for gas. Fund this exact address; automatic retry in ${retrySeconds}s.`;
+  }
+  return `Operator action failed; retrying in ${retrySeconds}s: ${detail}`;
+}
+
 function selectRpcEndpoint(index) {
   const previousProvider = operatorProvider;
   activeRpcIndex = index;
@@ -136,7 +155,8 @@ function snapshot(clientId) {
     seconds: timeLeft,
     scenario: round.phase === "betting" || round.phase === "waiting" ? hiddenScene : round.scenario,
     decision: round.phase === "betting" || round.phase === "waiting" ? null : round.decision,
-    trade: round.trade,
+    // Keep the fly's selected trade side sealed until the bet window has ended.
+    trade: round.trade ? { ...round.trade, side: round.phase === "betting" ? null : round.trade.side, marketFeatures: undefined } : null,
     market: marketFeed.snapshot(),
     brain: round.brain,
     commitment: round.commitment,
@@ -236,7 +256,7 @@ function advancePreviewRound() {
     if (!trade) return;
     trade.closeAt = now + BET_SECONDS * 1000;
     round = makeRound(round.id, trade.closeAt, round.scenario.seed, trade);
-    pushFeed(`BTC-USD market live · fly entered ${trade.side.toUpperCase()} at $${trade.entryPrice.toFixed(2)}`);
+    pushFeed(`BTC-USD market live · shared position opened at $${trade.entryPrice.toFixed(2)}`);
     saveRound();
     broadcast();
     return;
@@ -253,7 +273,7 @@ function advancePreviewRound() {
     pushFeed(`Round #${round.id} result · ${round.decision.outcome.replace("_", " ").toUpperCase()}`);
   } else {
     round = openPreviewRound(round.id + 1);
-    if (round.trade) pushFeed(`BTC-USD market live · fly entered ${round.trade.side.toUpperCase()} at $${round.trade.entryPrice.toFixed(2)}`);
+    if (round.trade) pushFeed(`BTC-USD market live · shared position opened at $${round.trade.entryPrice.toFixed(2)}`);
   }
   broadcast();
 }
@@ -281,18 +301,20 @@ async function openNextOnchainRound() {
   const latestBlock = await readRpcWithRetry(() => operatorProvider.getBlock("latest"));
   if (!latestBlock) throw new Error("Could not read the latest Monad block timestamp.");
   const closesAt = latestBlock.timestamp + BET_SECONDS;
+  const seed = randomBytes(4).readUInt32BE(0) || 1;
+  const preparedRound = makeRound(id, Date.now() + BET_SECONDS * 1000, seed, { ...trade, closeAt: closesAt * 1000 });
   const tx = await operatorContract.openRound(closesAt);
   const receipt = await tx.wait();
   if (!receipt) throw new Error("Monad did not return a receipt for the new round.");
   let openedBlock = null;
   try { openedBlock = await readRpcWithRetry(() => operatorProvider.getBlock(receipt.blockNumber)); } catch { /* Use the latest block read as a safe fallback. */ }
   const chainTimestamp = openedBlock?.timestamp ?? latestBlock.timestamp;
-  trade.closeAt = closesAt * 1000;
-  round = makeRound(id, Date.now() + Math.max(0, closesAt - chainTimestamp) * 1000, undefined, trade);
+  preparedRound.deadline = Date.now() + Math.max(0, closesAt - chainTimestamp) * 1000;
+  round = preparedRound;
   saveRound();
   rpcFailureCount = 0;
   operatorStatus = { ...operatorStatus, ready: true, message: `Round #${id} open · betting closes in ${BET_SECONDS}s.` };
-  pushFeed(`Monad round #${id} opened · BTC-USD ${trade.side.toUpperCase()} at $${trade.entryPrice.toFixed(2)}`);
+  pushFeed(`Monad round #${id} opened · BTC-USD position sealed at $${trade.entryPrice.toFixed(2)}`);
   broadcast();
 }
 
@@ -416,7 +438,7 @@ async function syncOnchainGame() {
     const retryDelay = nextRpcRetryDelay();
     retryAt = Date.now() + retryDelay;
     const retrySeconds = Math.ceil(retryDelay / 1000);
-    operatorStatus = { ...operatorStatus, ready: false, message: error instanceof Error ? `Operator action failed; retrying in ${retrySeconds}s: ${error.message}` : `Operator action failed; retrying in ${retrySeconds}s.` };
+    operatorStatus = { ...operatorStatus, ready: false, message: describeOperatorFailure(error, retrySeconds) };
     console.error(operatorStatus.message);
     broadcast();
   } finally {

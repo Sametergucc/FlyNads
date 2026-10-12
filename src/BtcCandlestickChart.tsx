@@ -7,7 +7,7 @@ const money = (value: number) => `$${value.toLocaleString("en-US", { minimumFrac
 export default function BtcCandlestickChart({ market, trade }: Props) {
   const candles = market?.candles.slice(-72) ?? [];
   const chartWidth = 900, chartHeight = 260;
-  const left = 18, right = 74, top = 18, bottom = 66;
+  const left = 18, right = 28, top = 18, bottom = 66;
   const plotWidth = chartWidth - left - right, plotHeight = chartHeight - top - bottom;
   const values = candles.flatMap((candle) => [candle.low, candle.high]);
   const current = market?.price;
@@ -29,15 +29,15 @@ export default function BtcCandlestickChart({ market, trade }: Props) {
 
   return <div className="btc-chart-wrap">
     <div className="btc-chart-meta">
-      <div className="btc-market-title"><span className={`btc-live-dot btc-${status}`} /><span>BTC / USD</span><small>LIVE · 1M</small></div>
-      <div className="btc-price-group"><b>{current ? money(current) : "Connecting…"}</b><small className={market?.change24hPercent != null && market.change24hPercent < 0 ? "btc-down" : "btc-up"}>{market?.change24hPercent != null ? `${market.change24hPercent >= 0 ? "+" : ""}${market.change24hPercent.toFixed(2)}% · 24H` : "LIVE PRICE"}</small></div>
+      <div className="btc-market-title"><span className={`btc-live-dot btc-${status}`} /><span>BTC / USD</span></div>
+      <div className="btc-price-group"><b>{current ? money(current) : "—"}</b><small aria-label="24 saatlik değişim" className={market?.change24hPercent != null && market.change24hPercent < 0 ? "btc-down" : "btc-up"}>{market?.change24hPercent != null ? `${market.change24hPercent >= 0 ? "+" : ""}${market.change24hPercent.toFixed(2)}%` : ""}</small></div>
     </div>
     <svg className="btc-candles btc-line-chart" viewBox={`0 0 ${chartWidth} ${chartHeight}`} preserveAspectRatio="none" role="img" aria-label="BTC USD real-time price line with volume">
       <defs><linearGradient id="btc-area-fill" x1="0" x2="0" y1="0" y2="1"><stop offset="0%" stopColor="#72dfcc" stopOpacity=".20"/><stop offset="100%" stopColor="#72dfcc" stopOpacity="0"/></linearGradient></defs>
       {[0, 1, 2, 3].map((step) => {
         const value = max - ((max - min) * step) / 3;
         const yy = y(value);
-        return <g key={step}><line x1={left} x2={chartWidth - right} y1={yy} y2={yy} className="btc-gridline"/><text x={chartWidth - right + 8} y={yy + 3} className="btc-axis-label">{money(value)}</text></g>;
+        return <line key={step} x1={left} x2={chartWidth - right} y1={yy} y2={yy} className="btc-gridline"/>;
       })}
       {candles.map((candle, index) => {
         const barX = left + volumeSlot * index + volumeSlot * .2;
@@ -50,7 +50,7 @@ export default function BtcCandlestickChart({ market, trade }: Props) {
       {current && <g><line x1={left} x2={chartWidth - right} y1={y(current)} y2={y(current)} className="btc-last-line"/><circle cx={x(prices.length - 1)} cy={y(current)} r="3" className="btc-last-dot"/></g>}
       {trade?.status === "open" && trade.entryPrice && <g><line x1={left} x2={chartWidth - right} y1={y(trade.entryPrice)} y2={y(trade.entryPrice)} className="btc-entry-line"/><text x={left + 7} y={y(trade.entryPrice) - 5} className="btc-entry-label">GİRİŞ {money(trade.entryPrice)}</text></g>}
       {trade?.status === "closed" && trade.exitPrice && <g><line x1={left} x2={chartWidth - right} y1={y(trade.exitPrice)} y2={y(trade.exitPrice)} className="btc-exit-line"/><text x={left + 7} y={y(trade.exitPrice) - 5} className="btc-entry-label">ÇIKIŞ {money(trade.exitPrice)}</text></g>}
-      {candles.length > 0 && [0, Math.floor(candles.length / 3), Math.floor((candles.length * 2) / 3), candles.length - 1].map((index, tick) => <text key={`${index}-${tick}`} x={left + volumeSlot * index} y={chartHeight - 7} className="btc-axis-label">{new Date(candles[index].time).toLocaleTimeString("tr-TR", { hour: "2-digit", minute: "2-digit" })}</text>)}
+      {candles.length > 0 && [0, Math.floor(candles.length / 3), Math.floor((candles.length * 2) / 3), candles.length - 1].map((index, tick) => <text key={`${index}-${tick}`} x={x(index)} y={chartHeight - 7} textAnchor={index === 0 ? "start" : index === candles.length - 1 ? "end" : "middle"} className="btc-axis-label">{new Date(candles[index].time).toLocaleTimeString("tr-TR", { hour: "2-digit", minute: "2-digit" })}</text>)}
     </svg>
     {status !== "live" && <div className={`btc-chart-state btc-state-${status}`}>{status === "connecting" ? "Coinbase piyasa akışı bağlanıyor…" : status === "stale" ? "BTC/USD verisi gecikti · güncelleme bekleniyor" : "Piyasa verisi çevrimdışı"}</div>}
   </div>;

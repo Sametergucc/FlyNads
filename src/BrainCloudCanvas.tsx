@@ -29,6 +29,7 @@ interface Props {
 }
 
 type Projection = { x: number; y: number; z: number; depth: number };
+type ProjectionTransform = { cosYaw: number; sinYaw: number; cosPitch: number; sinPitch: number; scale: number };
 type Pulse = { source: number; target: number; start: number; inhibitory: boolean };
 type View = { yaw: number; pitch: number; zoom: number };
 const INITIAL_VIEW: View = { yaw: -0.24, pitch: -0.22, zoom: 1 };
@@ -61,6 +62,10 @@ class CloudRenderer {
   private lastDraw = 0;
   private lastFrame = -1;
   private lastRound = -1;
+  private dotCanvas = document.createElement("canvas");
+  private dotContext = this.dotCanvas.getContext("2d");
+  private dotImage: ImageData | null = null;
+  private pointColors: number[][];
   private fireTimes: Float64Array;
   private potentialTimes: Float64Array;
   private potentialStrength: Float32Array;
@@ -69,8 +74,6 @@ class CloudRenderer {
   private pulses: Pulse[] = [];
   private cloudProjection: Projection[];
   private circuitProjection: Projection[];
-  private order: number[];
-  private sprites: HTMLCanvasElement[];
   private whiteSprite = makeSprite("#e7ffff");
   private goldSprite = makeSprite("#ffe8a1");
   private pointer = { x: -100, y: -100, startX: 0, startY: 0, dragging: false, moved: false };
@@ -80,6 +83,11 @@ class CloudRenderer {
     const context = canvas.getContext("2d", { alpha: false });
     if (!context) throw new Error("Canvas 2D is unavailable in this browser.");
     this.context = context;
+    this.pointColors = cloud.groups.map((group) => [
+      Number.parseInt(group.color.slice(1, 3), 16),
+      Number.parseInt(group.color.slice(3, 5), 16),
+      Number.parseInt(group.color.slice(5, 7), 16),
+    ]);
     this.fireTimes = new Float64Array(circuit.neurons.length).fill(-1e9);
     this.potentialTimes = new Float64Array(circuit.neurons.length).fill(-1e9);
     this.potentialStrength = new Float32Array(circuit.neurons.length);
@@ -89,8 +97,6 @@ class CloudRenderer {
     this.baseEdges = [...circuit.edges].sort((a, b) => b.synapses - a.synapses).slice(0, 42);
     this.cloudProjection = cloud.points.map(() => ({ x: 0, y: 0, z: 0, depth: 1 }));
     this.circuitProjection = cloud.circuitPositions.map(() => ({ x: 0, y: 0, z: 0, depth: 1 }));
-    this.order = cloud.points.map((_, index) => index);
-    this.sprites = cloud.groups.map((group) => makeSprite(group.color));
     this.observer = new ResizeObserver(this.resize);
     this.observer.observe(canvas);
     canvas.addEventListener("pointerdown", this.pointerDown);
@@ -162,18 +168,20 @@ class CloudRenderer {
     this.dpr = Math.min(window.devicePixelRatio || 1, 2);
     this.canvas.width = Math.round(this.width * this.dpr);
     this.canvas.height = Math.round(this.height * this.dpr);
+    // One backing pixel per CSS pixel keeps full-screen high-DPI memory bounded.
+    this.dotCanvas.width = Math.ceil(this.width);
+    this.dotCanvas.height = Math.ceil(this.height);
+    this.dotImage = this.dotContext?.createImageData(this.dotCanvas.width, this.dotCanvas.height) ?? null;
   };
 
-  private project(x: number, y: number, z: number, target: Projection) {
-    const { yaw, pitch, zoom } = this.view;
-    const px = x * Math.cos(yaw) + z * Math.sin(yaw);
-    const pz = -x * Math.sin(yaw) + z * Math.cos(yaw);
-    const py = y * Math.cos(pitch) - pz * Math.sin(pitch);
-    const depth = y * Math.sin(pitch) + pz * Math.cos(pitch);
+  private project(x: number, y: number, z: number, target: Projection, transform: ProjectionTransform) {
+    const px = x * transform.cosYaw + z * transform.sinYaw;
+    const pz = -x * transform.sinYaw + z * transform.cosYaw;
+    const py = y * transform.cosPitch - pz * transform.sinPitch;
+    const depth = y * transform.sinPitch + pz * transform.cosPitch;
     const perspective = 3.2 / (3.2 + depth);
-    const scale = Math.min(this.width * 0.425, this.height * 0.67) * zoom;
-    target.x = this.width * 0.5 + px * scale * perspective;
-    target.y = this.height * 0.43 + py * scale * perspective;
+    target.x = this.width * 0.5 + px * transform.scale * perspective;
+    target.y = this.height * 0.43 + py * transform.scale * perspective;
     target.z = depth;
     target.depth = perspective;
   }
@@ -187,6 +195,11 @@ class CloudRenderer {
     this.lastDraw = now;
     const options = this.options();
     if (options.autoRotate && !this.pointer.dragging) this.view.yaw += Math.min(elapsed, 70) * 0.00007;
+    const transform: ProjectionTransform = {
+      cosYaw: Math.cos(this.view.yaw), sinYaw: Math.sin(this.view.yaw),
+      cosPitch: Math.cos(this.view.pitch), sinPitch: Math.sin(this.view.pitch),
+      scale: Math.min(this.width * 0.425, this.height * 0.67) * this.view.zoom,
+    };
     const context = this.context;
     context.setTransform(this.dpr, 0, 0, this.dpr, 0, 0);
     context.globalCompositeOperation = "source-over";
@@ -204,13 +217,12 @@ class CloudRenderer {
 
     for (let index = 0; index < this.cloud.points.length; index++) {
       const point = this.cloud.points[index];
-      this.project(point[0], point[1], point[2], this.cloudProjection[index]);
+      this.project(point[0], point[1], point[2], this.cloudProjection[index], transform);
     }
     for (let index = 0; index < this.cloud.circuitPositions.length; index++) {
       const point = this.cloud.circuitPositions[index];
-      this.project(point[0], point[1], point[2], this.circuitProjection[index]);
+      this.project(point[0], point[1], point[2], this.circuitProjection[index], transform);
     }
-    this.order.sort((a, b) => this.cloudProjection[b].z - this.cloudProjection[a].z);
 
     if (options.showConnections) {
       context.strokeStyle = "#96c9b914";
@@ -224,17 +236,31 @@ class CloudRenderer {
       context.stroke();
     }
 
-    context.globalCompositeOperation = "lighter";
-    for (const index of this.order) {
-      const group = this.cloud.points[index][3];
-      if (options.activeGroups[group] === false) continue;
-      const point = this.cloudProjection[index];
-      if (point.x < -10 || point.y < -10 || point.x > this.width + 10 || point.y > this.height + 10) continue;
-      const size = (4.5 + (index % 7) * 0.18) * point.depth * Math.sqrt(this.view.zoom);
-      context.globalAlpha = limit((0.5 - point.z * 0.23) * (group === 5 ? 0.43 : 1), 0.12, 0.85);
-      context.drawImage(this.sprites[group], point.x - size / 2, point.y - size / 2, size, size);
+    // Rasterize the 139k measured anatomical points into a reusable transparent
+    // layer. This keeps full-brain mode responsive without a sprite draw per dot.
+    if (this.dotImage && this.dotContext) {
+      const pixels = this.dotImage.data;
+      pixels.fill(0);
+      const pixelWidth = this.dotImage.width;
+      const pixelHeight = this.dotImage.height;
+      for (let index = 0; index < this.cloud.points.length; index++) {
+        const group = this.cloud.points[index][3];
+        if (options.activeGroups[group] === false) continue;
+        const point = this.cloudProjection[index];
+        const x = Math.round(point.x), y = Math.round(point.y);
+        if (x < 0 || y < 0 || x >= pixelWidth || y >= pixelHeight) continue;
+        const pixel = (y * pixelWidth + x) * 4;
+        const color = this.pointColors[group] ?? [180, 195, 195];
+        pixels[pixel] = color[0]; pixels[pixel + 1] = color[1]; pixels[pixel + 2] = color[2];
+        pixels[pixel + 3] = Math.round(limit((0.4 - point.z * 0.12) * (group === 5 ? 0.58 : 0.95), 0.12, 0.78) * 255);
+      }
+      this.dotContext.putImageData(this.dotImage, 0, 0);
+      context.globalCompositeOperation = "source-over";
+      context.globalAlpha = 1;
+      context.drawImage(this.dotCanvas, 0, 0, this.width, this.height);
     }
 
+    context.globalCompositeOperation = "lighter";
     if (options.showConnections) {
       for (const pulse of this.pulses) {
         const progress = (now - pulse.start) / 240;

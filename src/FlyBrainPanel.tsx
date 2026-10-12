@@ -49,9 +49,12 @@ export default function FlyBrainPanel({ phase, roundId, decision, streamOnline }
   const stopRotation = useCallback(() => setAutoRotate(false), []);
 
   useEffect(() => {
-    const timer = window.setInterval(() => setNow(Date.now()), 500);
+    // The sealed decision has 5 ms simulation frames; refresh often enough to
+    // replay them evenly. Outside the reveal, freshness checks need less work.
+    const replaying = phase === "reveal" || phase === "settled";
+    const timer = window.setInterval(() => setNow(Date.now()), replaying ? 40 : 500);
     return () => window.clearInterval(timer);
-  }, []);
+  }, [phase]);
 
   useEffect(() => {
     const preference = window.matchMedia("(prefers-reduced-motion: reduce)");
@@ -121,26 +124,42 @@ export default function FlyBrainPanel({ phase, roundId, decision, streamOnline }
 
   const matchesRound = sample?.frame.roundId === roundId;
   const fresh = Boolean(sample && now - sample.receivedAt < 2000);
+  const neural = decision?.neural;
+  const showSummary = (phase === "reveal" || phase === "settled") && Boolean(neural);
+  const replayIndex = neural?.frames.length ? Math.floor(now / 120) % neural.frames.length : -1;
+  const replayFrame = showSummary && neural && replayIndex >= 0 ? {
+    roundId,
+    sequence: Math.floor(now / 120),
+    simulatedMs: Math.round(replayIndex * neural.durationMs / neural.frames.length),
+    frameMs: neural.durationMs / neural.frames.length,
+    playbackRate: 1,
+    sourceSide: neural.sourceSide,
+    inputRateHz: Math.round(((neural.inputRatesHz?.left ?? 0) + (neural.inputRatesHz?.right ?? 0)) / 2),
+    active: neural.frames[replayIndex],
+    potentials: [] as Array<{ index: number; millivolts: number }>,
+    spikeCount: neural.frames[replayIndex].length,
+    activeNeuronCount: neural.activeNeuronCount,
+    status: "live" as const,
+  } : null;
   const streamError = matchesRound && sample?.frame.status === "error";
-  const frame = streamOnline && matchesRound && fresh && sample?.frame.status === "live" ? sample.frame : null;
+  const liveFrame = streamOnline && matchesRound && fresh && sample?.frame.status === "live" ? sample.frame : null;
+  const frame = replayFrame ?? liveFrame;
   const activeIndices = [...new Set(frame?.active ?? [])].filter((index) => Boolean(assets?.circuit.neurons[index]));
   const selectedCell = selectedIndex !== null ? assets?.circuit.neurons[selectedIndex] : null;
   const potential = selectedIndex !== null ? frame?.potentials.find((entry) => entry.index === selectedIndex)?.millivolts : undefined;
   const selectedGroup = selectedIndex !== null && assets ? assets.cloud.groups[assets.cloud.circuitGroups[selectedIndex]] : undefined;
-  const showSummary = (phase === "reveal" || phase === "settled") && decision?.neural;
-  const status = frame ? "CANLI" : streamError ? "SİNYAL HATASI" : !streamOnline ? "BAĞLANTI YOK" : "SİNYAL BEKLENİYOR";
+  const status = replayFrame ? "KARAR İZİ" : liveFrame ? "CANLI" : streamError ? "SİNYAL HATASI" : !streamOnline ? "BAĞLANTI YOK" : "SİNYAL BEKLENİYOR";
 
   return (
     <section ref={panelRef} className={`panel neural-panel ${expanded ? "is-expanded" : ""}`} role={expanded ? "dialog" : undefined} aria-modal={expanded ? true : undefined} aria-label="Meyve sineği beyninin üç boyutlu nöron görünümü">
       <div className="side-heading neural-heading">
-        <div><span className="eyebrow">FLYWIRE · FAFB V783</span><h2>Sineğin beyni <span className="neural-version">3D</span></h2></div>
+        <div><h2>Beyin <span className="neural-version">3D</span></h2></div>
         <span className={`neural-state ${frame ? "is-live" : streamError ? "is-error" : "is-waiting"}`}><i />{status}</span>
       </div>
 
       <div className="neural-cloud-scene">
         {assets && <BrainCloudCanvas cloud={assets.cloud} circuit={assets.circuit} frame={frame} activeGroups={activeGroups} autoRotate={autoRotate} showConnections={showConnections} selectedIndex={selectedIndex} onSelect={setSelectedIndex} onInteract={stopRotation} controlRef={controlRef} />}
 
-        <div className="neural-scene-caption"><span>Duyusal LIF · 20× yavaş</span><small>Sürükle · döndür / tekerlek · yakınlaştır</small></div>
         <div className="neural-toolbar" role="group" aria-label="Beyin görünümü kontrolleri">
           <button type="button" onClick={() => setAutoRotate((value) => !value)} disabled={!assets} aria-label={autoRotate ? "Otomatik dönüşü durdur" : "Otomatik döndür"} title={autoRotate ? "Dönüşü durdur" : "Otomatik döndür"} aria-pressed={autoRotate}><ControlIcon name={autoRotate ? "pause" : "play"} /></button>
           <button type="button" onClick={() => controlRef.current?.reset()} disabled={!assets} aria-label="Görünümü sıfırla" title="Görünümü sıfırla"><ControlIcon name="reset" /></button>
@@ -159,11 +178,10 @@ export default function FlyBrainPanel({ phase, roundId, decision, streamOnline }
       </div>
 
       <div className="neural-readout">
-        <div className="neural-stat"><span>BU KAREDE ATEŞLEYEN</span><b>{frame ? activeIndices.length : "—"}<small> / {assets?.circuit.neurons.length ?? 699}</small></b></div>
+        <div className="neural-stat"><span>ATEŞLEYEN</span><b>{frame ? activeIndices.length : "—"}<small> / {assets?.circuit.neurons.length.toLocaleString("tr-TR") ?? "—"}</small></b></div>
       </div>
 
       <div className="neural-active-list" aria-label="Bu karede ateşleyen nöronlar">
-        <span className="neural-list-label">Aktif hücreyi seç</span>
         <div className="neural-firing-cells">{activeIndices.slice(0, 5).map((index) => {
           const cell = assets!.circuit.neurons[index];
           return <button type="button" className={`neural-cell ${selectedIndex === index ? "is-selected" : ""}`} key={index} onClick={() => setSelectedIndex(index)} aria-pressed={selectedIndex === index} title={`FlyWire ${cell.id}`}><i /><span>{cell.type}</span></button>;
@@ -179,8 +197,8 @@ export default function FlyBrainPanel({ phase, roundId, decision, streamOnline }
         <p>Membran potansiyeli <strong>{typeof potential === "number" && Number.isFinite(potential) ? `${potential.toFixed(1)} mV` : "bu karede ölçüm yok"}</strong></p>
       </div> : <p className="neural-selection-hint">Parlayan bir nörona dokun; hücre kimliğini ve iletilen membran potansiyelini gör.</p>}
 
-      <p className="neural-source-note">{assets?.cloud.points.length.toLocaleString("tr-TR") ?? "6.300"} ölçülmüş hücre / referans konumu. Parlayan noktalar {assets?.circuit.neurons.length ?? 699} nöronlu canlı devreyi gösterir.</p>
-      <details className="neural-data-details"><summary>Veri ve model</summary><p>Renkler FlyWire hücre sınıflarıdır. Konumlar soma veya işaretlenmiş hücre referans noktalarıdır. Duyusal LIF akışı sunucuda ilerler; tüm beyin simüle edilmez.</p><p>LC10a → AOTU → DNa · {assets?.circuit.edges.length.toLocaleString("tr-TR") ?? "4.199"} bağlantı. Bahis kararından bağımsız canlı duyusal aktivite.</p>{showSummary && <p>Bu turun karar devresi: {decision.neural!.activeNeuronCount} hücre ateşledi.</p>}<a href="https://github.com/flyconnectome/flywire_annotations" target="_blank" rel="noreferrer">FlyWire kaynak verisi ↗</a></details>
+      <p className="neural-source-note">{assets?.cloud.points.length.toLocaleString("tr-TR") ?? "139.248"} hücre konumu · {assets?.circuit.neurons.length.toLocaleString("tr-TR") ?? "—"} nöronlu karar devresi</p>
+      <details className="neural-data-details"><summary>Devre ayrıntıları</summary><p>Her nokta FlyWire anotasyonundaki ölçülmüş soma veya referans konumudur. Sadece seçili ve gerçek bağlantıları doğrulanan alt devre LIF modeliyle simüle edilir.</p><p>LC10 görsel hücreleri → AOTU → merkezî kompleks → aşağı yönlü nöronlar · {assets?.circuit.edges.length.toLocaleString("tr-TR") ?? "—"} gerçek bağlantı. Karar izi bahis kilitlendikten sonra oynatılır.</p>{showSummary && neural && <p>Bu turun kararı: <b>{(neural.side ?? neural.readout.side ?? (decision?.action === "dive" ? "long" : "short")).toUpperCase()}</b> · {neural.activeNeuronCount} nöron ateşledi · sol/sağ motor çıktısı {(neural.readout.leftSteeringHz ?? 0).toFixed(1)} / {(neural.readout.rightSteeringHz ?? 0).toFixed(1)} Hz{neural.readout.usedSensoryFallback ? " · motor eşitliği, duyusal kanal beraberliği çözdü" : ""}.</p>}<a href="https://github.com/flyconnectome/flywire_annotations" target="_blank" rel="noreferrer">FlyWire kaynak verisi ↗</a></details>
     </section>
   );
 }

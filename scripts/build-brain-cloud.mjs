@@ -3,8 +3,9 @@ import { existsSync, readFileSync, writeFileSync } from "node:fs";
 import { mkdir } from "node:fs/promises";
 import { dirname, resolve } from "node:path";
 
-// Rebuild the display cloud from the same public annotation snapshot as the
-// simulated circuit. No random positions, mirrored copies or morphology guesses.
+// Rebuild the anatomical display from every located neuron in the same public
+// annotation snapshot as the simulated circuit. No random positions, mirrored
+// copies or morphology guesses are added.
 const projectRoot = process.cwd();
 const annotationPath = resolve(projectRoot, "data/brain/Supplemental_file1_neuron_annotations.tsv");
 const circuitPath = resolve(projectRoot, "src/data/flywire-vision-circuit.json");
@@ -29,12 +30,12 @@ for (const name of ["root_id", "super_class", "cell_class", "side", "pos_x", "po
 }
 
 const groups = [
-  { id: "visual", label: "Görsel nöronlar", color: "#5ce5ed", meaning: "super_class optic, visual_projection or visual_centrifugal; or cell_class visual or optic_lobes", budget: 3500 },
-  { id: "olfactory", label: "Koku devresi", color: "#ff9a51", meaning: "cell_class olfactory, ALPN, ALLN, ALIN or ALON", budget: 450 },
-  { id: "mushroom", label: "Mantar cismi", color: "#eb7ddd", meaning: "cell_class Kenyon_Cell, MBON or MBIN", budget: 600 },
-  { id: "central_complex", label: "Merkezî kompleks", color: "#f4dd74", meaning: "cell_class CX", budget: 450 },
-  { id: "lateral_horn", label: "Yan boynuz", color: "#93d679", meaning: "cell_class LHLN or LHCENT", budget: 300 },
-  { id: "other", label: "Diğer nöronlar", color: "#9aaeb7", meaning: "Remaining annotated neuron classes", budget: 1000 },
+  { id: "visual", label: "Görsel nöronlar", color: "#5ce5ed", meaning: "super_class optic, visual_projection or visual_centrifugal; or cell_class visual or optic_lobes" },
+  { id: "olfactory", label: "Koku devresi", color: "#ff9a51", meaning: "cell_class olfactory, ALPN, ALLN, ALIN or ALON" },
+  { id: "mushroom", label: "Mantar cismi", color: "#eb7ddd", meaning: "cell_class Kenyon_Cell, MBON or MBIN" },
+  { id: "central_complex", label: "Merkezî kompleks", color: "#f4dd74", meaning: "cell_class CX" },
+  { id: "lateral_horn", label: "Yan boynuz", color: "#93d679", meaning: "cell_class LHLN or LHCENT" },
+  { id: "other", label: "Diğer nöronlar", color: "#9aaeb7", meaning: "Remaining annotated neuron classes" },
 ];
 
 function groupFor(superClass, cellClass) {
@@ -54,15 +55,6 @@ function readPosition(row, prefix) {
   return xyz.every((value) => Number.isFinite(value) && value > 0) ? xyz : null;
 }
 
-function hashId(id) {
-  let value = 2166136261;
-  for (let index = 0; index < id.length; index++) {
-    value ^= id.charCodeAt(index);
-    value = Math.imul(value, 16777619);
-  }
-  return value >>> 0;
-}
-
 const neurons = new Map();
 let rejectedPositions = 0;
 for (const line of lines) {
@@ -79,7 +71,6 @@ for (const line of lines) {
     side: row[column.side] || "unknown",
     position: positionMicrometers,
     coordinateSource: soma ? "soma" : "anchor",
-    rank: hashId(id),
   });
 }
 
@@ -90,34 +81,14 @@ const circuitNeurons = circuitIds.map((id) => {
   if (!neuron) throw new Error(`Simulated neuron ${id} has no valid annotated position.`);
   return neuron;
 });
-const mandatoryIds = new Set(circuitIds);
-const selected = [];
-
+const allNeurons = [...neurons.values()].sort((a, b) => a.id.localeCompare(b.id));
 for (let groupIndex = 0; groupIndex < groups.length; groupIndex++) {
   const group = groups[groupIndex];
-  const population = [...neurons.values()].filter((neuron) => neuron.group === groupIndex);
-  const mandatory = population.filter((neuron) => mandatoryIds.has(neuron.id));
-  const candidates = population.filter((neuron) => !mandatoryIds.has(neuron.id));
-  const remainingBudget = Math.max(0, group.budget - mandatory.length);
-  // Allocate a proportional quota per annotated side, then sample by root-ID
-  // hash. This is stable, independent of table order and preserves both lobes.
-  const sides = [...new Set(candidates.map((neuron) => neuron.side))].sort();
-  const strata = sides.map((side) => {
-    const members = candidates.filter((neuron) => neuron.side === side).sort((a, b) => a.rank - b.rank || a.id.localeCompare(b.id));
-    const exactQuota = candidates.length ? remainingBudget * members.length / candidates.length : 0;
-    return { members, quota: Math.min(members.length, Math.floor(exactQuota)), remainder: exactQuota % 1 };
-  });
-  let extras = Math.min(remainingBudget, candidates.length) - strata.reduce((sum, stratum) => sum + stratum.quota, 0);
-  for (const stratum of [...strata].sort((a, b) => b.remainder - a.remainder)) {
-    if (extras > 0 && stratum.quota < stratum.members.length) { stratum.quota++; extras--; }
-  }
-  const sampled = [...mandatory, ...strata.flatMap((stratum) => stratum.members.slice(0, stratum.quota))].sort((a, b) => a.id.localeCompare(b.id));
-  selected.push(...sampled);
+  const population = allNeurons.filter((neuron) => neuron.group === groupIndex);
   group.population = population.length;
-  group.count = sampled.length;
-  group.somaCount = sampled.filter((neuron) => neuron.coordinateSource === "soma").length;
-  group.anchorCount = sampled.length - group.somaCount;
-  delete group.budget;
+  group.count = population.length;
+  group.somaCount = population.filter((neuron) => neuron.coordinateSource === "soma").length;
+  group.anchorCount = population.length - group.somaCount;
 }
 
 // One similarity transform, shared by the cloud and every simulated neuron.
@@ -130,12 +101,12 @@ const boundsMicrometers = [0, 1, 2].map((axis) => {
 const centerMicrometers = boundsMicrometers.map(([min, max]) => (min + max) / 2);
 const scaleMicrometers = Math.max(...boundsMicrometers.map(([min, max]) => (max - min) / 2));
 const normalize = (neuron) => neuron.position.map((value, axis) => Number(((value - centerMicrometers[axis]) / scaleMicrometers).toFixed(5)));
-const pointIds = selected.map((neuron) => neuron.id);
-const points = selected.map((neuron) => [...normalize(neuron), neuron.group]);
+const pointIds = allNeurons.map((neuron) => neuron.id);
+const points = allNeurons.map((neuron) => [...normalize(neuron), neuron.group]);
 const circuitPositions = circuitNeurons.map(normalize);
 
-if (new Set(pointIds).size !== points.length) throw new Error("Duplicate sampled root IDs.");
-if (points.length < 4000 || points.length > 8000) throw new Error(`Unexpected point count: ${points.length}`);
+if (new Set(pointIds).size !== points.length) throw new Error("Duplicate annotated root IDs.");
+if (points.length < 100_000) throw new Error(`Unexpected full-brain point count: ${points.length}`);
 if (points.some((point) => point.length !== 4 || point.some((value) => !Number.isFinite(value)))) throw new Error("Invalid cloud coordinates.");
 if (circuitPositions.length !== circuit.neurons.length) throw new Error("Circuit index alignment failed.");
 const cloudIndexById = new Map(pointIds.map((id, index) => [id, index]));
@@ -152,7 +123,7 @@ const output = {
   pointIds,
   circuitPositions,
   circuitIds,
-  circuitGroups: circuitNeurons.map((neuron) => neuron.group),
+  circuitGroups: circuitNeurons.map((neuron) => groupFor(neuron.superClass, neuron.cellClass)),
   coordinates: {
     inputUnits: "4 × 4 × 40 nm voxels",
     positionPreference: "Complete soma_x/y/z triplet, otherwise complete pos_x/y/z anchor triplet",
@@ -169,9 +140,9 @@ const output = {
     annotationSha256: createHash("sha256").update(sourceBytes).digest("hex"),
     sourceNeuronCount: neurons.size,
     rejectedPositionCount: rejectedPositions,
-    sampling: "Fixed budgets per annotated group; proportional side strata; deterministic FNV-1a root-ID ranking; all simulated circuit neurons retained.",
+    sampling: "No sampling: every annotated neuron with a valid soma or anchor location is included.",
     citation: "Schlegel et al., Whole-brain annotation and multi-connectome cell typing of Drosophila, Nature (2024), doi:10.1038/s41586-024-07686-5; current annotations also incorporate Matsliah et al. (2024) and Berg et al. (2025/2026), as documented by FlyWire.",
-    limitation: "Each dot is one measured soma/anchor, not a reconstructed arbor or the position of a synapse. Only the separate 699-neuron visual circuit is simulated; the other points provide anatomical context.",
+    limitation: "Each dot is one measured soma/anchor, not a reconstructed arbor or the position of a synapse. The selected connectome-constrained circuit is simulated; other points provide anatomical context.",
   },
 };
 await mkdir(dirname(outputPath), { recursive: true });
