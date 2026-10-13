@@ -47,7 +47,16 @@ export default function BtcCandlestickChart({ market, trade }: Props) {
       })}
       {areaPath && <path d={areaPath} fill="url(#btc-area-fill)" />}
       {linePath && <path d={linePath} className="btc-price-line" />}
-      {current && <g><line x1={left} x2={chartWidth - right} y1={y(current)} y2={y(current)} className="btc-last-line"/><circle cx={x(prices.length - 1)} cy={y(current)} r="3" className="btc-last-dot"/></g>}
+      {current && <g><line x1={left} x2={chartWidth - right} y1={y(current)} y2={y(current)} className="btc-last-line"/><circle cx={x(prices.length - 1)} cy={y(current)} r="3" className="btc-last-dot"/>
+        <g className="btc-fly-marker" transform={`translate(${Math.min(chartWidth - right - 10, x(prices.length - 1) - 9)} ${Math.max(top + 14, y(current) - 16)})`} role="img" aria-label="Fly marker; trade direction is hidden">
+          <title>Fly position · direction hidden</title>
+          <circle r="10" className="btc-fly-halo"/>
+          <ellipse cx="-4" cy="-3" rx="4.1" ry="2.5" transform="rotate(-28 -4 -3)" className="btc-fly-wing"/>
+          <ellipse cx="4" cy="-3" rx="4.1" ry="2.5" transform="rotate(28 4 -3)" className="btc-fly-wing"/>
+          <ellipse cy="1.5" rx="1.8" ry="4.3" className="btc-fly-body"/>
+          <circle cy="-3.6" r="1.5" className="btc-fly-eye"/>
+        </g>
+      </g>}
       {trade?.status === "open" && trade.entryPrice && <g><line x1={left} x2={chartWidth - right} y1={y(trade.entryPrice)} y2={y(trade.entryPrice)} className="btc-entry-line"/><text x={left + 7} y={y(trade.entryPrice) - 5} className="btc-entry-label">GİRİŞ {money(trade.entryPrice)}</text></g>}
       {trade?.status === "closed" && trade.exitPrice && <g><line x1={left} x2={chartWidth - right} y1={y(trade.exitPrice)} y2={y(trade.exitPrice)} className="btc-exit-line"/><text x={left + 7} y={y(trade.exitPrice) - 5} className="btc-entry-label">ÇIKIŞ {money(trade.exitPrice)}</text></g>}
       {candles.length > 0 && [0, Math.floor(candles.length / 3), Math.floor((candles.length * 2) / 3), candles.length - 1].map((index, tick) => <text key={`${index}-${tick}`} x={x(index)} y={chartHeight - 7} textAnchor={index === 0 ? "start" : index === candles.length - 1 ? "end" : "middle"} className="btc-axis-label">{new Date(candles[index].time).toLocaleTimeString("tr-TR", { hour: "2-digit", minute: "2-digit" })}</text>)}

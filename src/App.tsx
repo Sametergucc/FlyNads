@@ -46,6 +46,12 @@ function isAmbiguousBetError(error: unknown): boolean {
   return /rate.?limit|could not coalesce|unknown_error|timeout|timed out|network error/i.test(parts.join(" "));
 }
 
+function hasFailedReceipt(error: unknown): boolean {
+  if (!error || typeof error !== "object") return false;
+  const receipt = (error as { receipt?: { status?: number | bigint } }).receipt;
+  return receipt?.status === 0 || receipt?.status === 0n;
+}
+
 function makeScenario(id: number): Scenario {
   const seed = (id * 2654435761) >>> 0;
   const unit = (offset: number) => (((seed ^ (offset * 2246822519)) >>> 0) % 1000) / 1000;
@@ -326,6 +332,10 @@ function App() {
 
   async function placeBet(side: Side) {
     if (displayedPhase !== "betting" || displayedBet || betBusy || uncertainBetForCurrentRound) return;
+    if (chainMode && displayedSeconds <= 4) {
+      setNotice("Bahis penceresi kapanıyor. İşlem göndermedim; sonraki turu bekleyin.");
+      return;
+    }
     if (!session) {
       await connectWallet();
       return;
@@ -367,7 +377,9 @@ function App() {
         setUncertainBet(pending);
         setNotice(`RPC is rate limited. The status of your #${chainRoundId} bet is unknown; do not submit it again until chain status is checked.`);
       } else {
-        setNotice(error instanceof Error ? error.message : "Bet could not be placed. Try again.");
+        setNotice(hasFailedReceipt(error)
+          ? "Tur işlem Monad'da onaylanmadan kapandı. Bahis kaydedilmedi; yalnızca gas ücreti harcanmış olabilir. Sonraki turda deneyin."
+          : error instanceof Error ? error.message : "Bet could not be placed. Try again.");
       }
     } finally { setBetBusy(false); }
   }
@@ -501,13 +513,14 @@ function App() {
             <div className="swarm-betting">
               <div className="pool-summary"><span><b>{totalPool.toFixed(3)} {chainReady ? "MON" : "PTS"}</b></span><span>{liquidatedPercent}% / {100-liquidatedPercent}%</span></div>
               <div className="dual-bet-control">
-                <button className={`dual-bet-option option-loss ${selected === "liquidated" ? "selected" : ""}`} onClick={() => placeBet("liquidated")} disabled={!chainReady || !chainRound || displayedPhase !== "betting" || displayedSeconds <= 0 || !!displayedBet || betBusy || uncertainBetForCurrentRound || chainRound.status !== 1}>
+                <button className={`dual-bet-option option-loss ${selected === "liquidated" ? "selected" : ""}`} onClick={() => placeBet("liquidated")} disabled={!chainReady || !chainRound || displayedPhase !== "betting" || displayedSeconds <= 4 || !!displayedBet || betBusy || uncertainBetForCurrentRound || chainRound.status !== 1}>
                   <span>FLY LOSES</span><b>{liquidatedPercent}%</b><i><em style={{ width: `${liquidatedPercent}%` }} /></i>
                 </button>
-                <button className={`dual-bet-option option-win ${selected === "gains" ? "selected" : ""}`} onClick={() => placeBet("gains")} disabled={!chainReady || !chainRound || displayedPhase !== "betting" || displayedSeconds <= 0 || !!displayedBet || betBusy || uncertainBetForCurrentRound || chainRound.status !== 1}>
+                <button className={`dual-bet-option option-win ${selected === "gains" ? "selected" : ""}`} onClick={() => placeBet("gains")} disabled={!chainReady || !chainRound || displayedPhase !== "betting" || displayedSeconds <= 4 || !!displayedBet || betBusy || uncertainBetForCurrentRound || chainRound.status !== 1}>
                   <span>FLY WINS</span><b>{100-liquidatedPercent}%</b><i><em style={{ width: `${100-liquidatedPercent}%` }} /></i>
                 </button>
               </div>
+              {chainMode && displayedPhase === "betting" && displayedSeconds <= 4 && <div className="notice" role="status">Bet window closing · next round soon</div>}
               <div className="inline-bet-amount"><label htmlFor="bet-amount">BET</label><input id="bet-amount" aria-label="Bet amount" inputMode="decimal" autoComplete="off" maxLength={16} placeholder="0.05" value={amount} onChange={(e)=>setAmount(e.target.value)} type="text" disabled={!!displayedBet || betBusy || uncertainBetForCurrentRound}/><span>MON</span><button type="button" onClick={()=>setAmount("0.10")} disabled={!!displayedBet || betBusy || uncertainBetForCurrentRound}>0.10</button></div>
               {displayedBet && <div className="bet-receipt">✓ {displayedBet.side.toUpperCase()} · {displayedBet.amount.toFixed(2)} {chainMode ? "MON" : "PTS"}</div>}
               {uncertainBetForCurrentRound && uncertainBet && <button className="verify-bet-button" onClick={() => void verifyUncertainBet()} disabled={betBusy || uncertainBetCheckDelay > 0}>{betBusy ? "CHECKING CHAIN…" : uncertainBetCheckDelay > 0 ? `CHECK STATUS IN ${Math.ceil(uncertainBetCheckDelay / 1000)}s` : `CHECK ROUND #${uncertainBet.roundId} BET STATUS ↗`}</button>}

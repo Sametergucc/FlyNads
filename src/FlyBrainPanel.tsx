@@ -13,6 +13,16 @@ type Props = {
 };
 
 type IconName = "play" | "pause" | "reset" | "plus" | "minus" | "expand" | "collapse";
+const GROUP_LABELS: Record<string, string> = {
+  visual: "Visual neurons",
+  olfactory: "Olfactory circuit",
+  mushroom: "Mushroom body",
+  central_complex: "Central complex",
+  lateral_horn: "Lateral horn",
+  other: "Other neurons",
+};
+const formatCount = (value: number) => value.toLocaleString("en-US");
+
 function ControlIcon({ name }: { name: IconName }) {
   const paths: Record<IconName, string> = {
     play: "M8 5l10 7-10 7Z",
@@ -148,57 +158,57 @@ export default function FlyBrainPanel({ phase, roundId, decision, streamOnline }
   const selectedCell = selectedIndex !== null ? assets?.circuit.neurons[selectedIndex] : null;
   const potential = selectedIndex !== null ? frame?.potentials.find((entry) => entry.index === selectedIndex)?.millivolts : undefined;
   const selectedGroup = selectedIndex !== null && assets ? assets.cloud.groups[assets.cloud.circuitGroups[selectedIndex]] : undefined;
-  const status = replayFrame ? "KARAR İZİ" : liveFrame ? "CANLI" : streamError ? "SİNYAL HATASI" : !streamOnline ? "BAĞLANTI YOK" : "SİNYAL BEKLENİYOR";
+  const status = replayFrame ? "DECISION REPLAY" : liveFrame ? "LIVE" : streamError ? "SIGNAL ERROR" : !streamOnline ? "OFFLINE" : "WAITING FOR SIGNAL";
 
   return (
-    <section ref={panelRef} className={`panel neural-panel ${expanded ? "is-expanded" : ""}`} role={expanded ? "dialog" : undefined} aria-modal={expanded ? true : undefined} aria-label="Meyve sineği beyninin üç boyutlu nöron görünümü">
+    <section ref={panelRef} className={`panel neural-panel ${expanded ? "is-expanded" : ""}`} role={expanded ? "dialog" : undefined} aria-modal={expanded ? true : undefined} aria-label="Fruit fly brain 3D neuron view">
       <div className="side-heading neural-heading">
-        <div><h2>Beyin <span className="neural-version">3D</span></h2></div>
+        <div><h2>Brain <span className="neural-version">3D</span></h2></div>
         <span className={`neural-state ${frame ? "is-live" : streamError ? "is-error" : "is-waiting"}`}><i />{status}</span>
       </div>
 
       <div className="neural-cloud-scene">
         {assets && <BrainCloudCanvas cloud={assets.cloud} circuit={assets.circuit} frame={frame} activeGroups={activeGroups} autoRotate={autoRotate} showConnections={showConnections} selectedIndex={selectedIndex} onSelect={setSelectedIndex} onInteract={stopRotation} controlRef={controlRef} />}
 
-        <div className="neural-toolbar" role="group" aria-label="Beyin görünümü kontrolleri">
-          <button type="button" onClick={() => setAutoRotate((value) => !value)} disabled={!assets} aria-label={autoRotate ? "Otomatik dönüşü durdur" : "Otomatik döndür"} title={autoRotate ? "Dönüşü durdur" : "Otomatik döndür"} aria-pressed={autoRotate}><ControlIcon name={autoRotate ? "pause" : "play"} /></button>
-          <button type="button" onClick={() => controlRef.current?.reset()} disabled={!assets} aria-label="Görünümü sıfırla" title="Görünümü sıfırla"><ControlIcon name="reset" /></button>
-          <button type="button" onClick={() => controlRef.current?.zoom(1.15)} disabled={!assets} aria-label="Yakınlaştır" title="Yakınlaştır"><ControlIcon name="plus" /></button>
-          <button type="button" onClick={() => controlRef.current?.zoom(1 / 1.15)} disabled={!assets} aria-label="Uzaklaştır" title="Uzaklaştır"><ControlIcon name="minus" /></button>
-          <button ref={expandButtonRef} type="button" onClick={toggleExpanded} aria-label={expanded ? "Tam ekrandan çık" : "Beyni tam ekranda aç"} title={expanded ? "Kapat · Esc" : "Tam ekran"}><ControlIcon name={expanded ? "collapse" : "expand"} /></button>
+        <div className="neural-toolbar" role="group" aria-label="Brain view controls">
+          <button type="button" onClick={() => setAutoRotate((value) => !value)} disabled={!assets} aria-label={autoRotate ? "Stop auto-rotation" : "Auto-rotate"} title={autoRotate ? "Stop rotation" : "Auto-rotate"} aria-pressed={autoRotate}><ControlIcon name={autoRotate ? "pause" : "play"} /></button>
+          <button type="button" onClick={() => controlRef.current?.reset()} disabled={!assets} aria-label="Reset view" title="Reset view"><ControlIcon name="reset" /></button>
+          <button type="button" onClick={() => controlRef.current?.zoom(1.15)} disabled={!assets} aria-label="Zoom in" title="Zoom in"><ControlIcon name="plus" /></button>
+          <button type="button" onClick={() => controlRef.current?.zoom(1 / 1.15)} disabled={!assets} aria-label="Zoom out" title="Zoom out"><ControlIcon name="minus" /></button>
+          <button ref={expandButtonRef} type="button" onClick={toggleExpanded} aria-label={expanded ? "Exit fullscreen" : "Open brain fullscreen"} title={expanded ? "Close · Esc" : "Fullscreen"}><ControlIcon name={expanded ? "collapse" : "expand"} /></button>
         </div>
 
-        {!assets && <div className="neural-load-state" role="status">{loadError ? <><b>Beyin verisi yüklenemedi.</b><button type="button" onClick={() => setAttempt((value) => value + 1)}>Yeniden yükle</button></> : <><i /><span>FlyWire nöronları yükleniyor…</span></>}</div>}
+        {!assets && <div className="neural-load-state" role="status">{loadError ? <><b>Brain data could not be loaded.</b><button type="button" onClick={() => setAttempt((value) => value + 1)}>Retry</button></> : <><i /><span>Loading FlyWire neurons…</span></>}</div>}
 
-        {assets && <div className="neural-region-legend" role="group" aria-label="Nöron gruplarını göster veya gizle">
-          {assets.cloud.groups.map((group, index) => <button type="button" key={group.id} className={activeGroups[index] ? "is-visible" : "is-hidden"} aria-pressed={Boolean(activeGroups[index])} aria-label={`${group.label}: ${activeGroups[index] ? "gizle" : "göster"}`} title={`${group.count.toLocaleString("tr-TR")} nöron · göstermek/gizlemek için tıkla`} onClick={() => setActiveGroups((current) => current.map((value, groupIndex) => groupIndex === index ? !value : value))}><i style={{ background: group.color }} /><span>{group.label}</span></button>)}
+        {assets && <div className="neural-region-legend" role="group" aria-label="Show or hide neuron groups">
+          {assets.cloud.groups.map((group, index) => { const label = GROUP_LABELS[group.id] ?? group.label; return <button type="button" key={group.id} className={activeGroups[index] ? "is-visible" : "is-hidden"} aria-pressed={Boolean(activeGroups[index])} aria-label={`${label}: ${activeGroups[index] ? "hide" : "show"}`} title={`${formatCount(group.count)} neurons · click to toggle`} onClick={() => setActiveGroups((current) => current.map((value, groupIndex) => groupIndex === index ? !value : value))}><i style={{ background: group.color }} /><span>{label}</span></button>; })}
         </div>}
 
-        <button type="button" className={`neural-connections-toggle ${showConnections ? "is-active" : ""}`} aria-pressed={showConnections} onClick={() => setShowConnections((value) => !value)} disabled={!assets}>{showConnections ? "✓ " : ""}Bağlantılar</button>
+        <button type="button" className={`neural-connections-toggle ${showConnections ? "is-active" : ""}`} aria-pressed={showConnections} onClick={() => setShowConnections((value) => !value)} disabled={!assets}>{showConnections ? "✓ " : ""}Connections</button>
       </div>
 
       <div className="neural-readout">
-        <div className="neural-stat"><span>ATEŞLEYEN</span><b>{frame ? activeIndices.length : "—"}<small> / {assets?.circuit.neurons.length.toLocaleString("tr-TR") ?? "—"}</small></b></div>
+        <div className="neural-stat"><span>FIRING</span><b>{frame ? activeIndices.length : "—"}<small> / {assets ? formatCount(assets.circuit.neurons.length) : "—"}</small></b></div>
       </div>
 
-      <div className="neural-active-list" aria-label="Bu karede ateşleyen nöronlar">
+      <div className="neural-active-list" aria-label="Neurons firing in this frame">
         <div className="neural-firing-cells">{activeIndices.slice(0, 5).map((index) => {
           const cell = assets!.circuit.neurons[index];
           return <button type="button" className={`neural-cell ${selectedIndex === index ? "is-selected" : ""}`} key={index} onClick={() => setSelectedIndex(index)} aria-pressed={selectedIndex === index} title={`FlyWire ${cell.id}`}><i /><span>{cell.type}</span></button>;
         })}
-          {!activeIndices.length && <span className="neural-empty">{frame ? "Bu karede ateşleme yok" : streamError ? "Simülasyon sinyali yenilenemedi" : "Canlı sunucu sinyali bekleniyor"}</span>}
+          {!activeIndices.length && <span className="neural-empty">{frame ? "No firing in this frame" : streamError ? "Could not refresh simulation signal" : "Waiting for live server signal"}</span>}
           {activeIndices.length > 5 && <span className="neural-more">+{activeIndices.length - 5}</span>}
         </div>
       </div>
 
       {selectedCell ? <div className="neural-selected-cell">
-        <div><i style={{ background: selectedGroup?.color ?? "#b7ff62" }} /><b>{selectedCell.type}</b><span>{selectedCell.side === "left" ? "Sol" : selectedCell.side === "right" ? "Sağ" : selectedCell.side} · {selectedCell.transmitter}</span><button type="button" aria-label="Nöron seçimini kaldır" onClick={() => setSelectedIndex(null)}>×</button></div>
+        <div><i style={{ background: selectedGroup?.color ?? "#b7ff62" }} /><b>{selectedCell.type}</b><span>{selectedCell.side === "left" ? "Left" : selectedCell.side === "right" ? "Right" : selectedCell.side} · {selectedCell.transmitter}</span><button type="button" aria-label="Clear neuron selection" onClick={() => setSelectedIndex(null)}>×</button></div>
         <code title="FlyWire root ID">{selectedCell.id}</code>
-        <p>Membran potansiyeli <strong>{typeof potential === "number" && Number.isFinite(potential) ? `${potential.toFixed(1)} mV` : "bu karede ölçüm yok"}</strong></p>
-      </div> : <p className="neural-selection-hint">Parlayan bir nörona dokun; hücre kimliğini ve iletilen membran potansiyelini gör.</p>}
+        <p>Membrane potential <strong>{typeof potential === "number" && Number.isFinite(potential) ? `${potential.toFixed(1)} mV` : "not measured in this frame"}</strong></p>
+      </div> : <p className="neural-selection-hint">Select a glowing neuron to view its cell ID and membrane potential.</p>}
 
-      <p className="neural-source-note">{assets?.cloud.points.length.toLocaleString("tr-TR") ?? "139.248"} hücre konumu · {assets?.circuit.neurons.length.toLocaleString("tr-TR") ?? "—"} nöronlu karar devresi</p>
-      <details className="neural-data-details"><summary>Devre ayrıntıları</summary><p>Her nokta FlyWire anotasyonundaki ölçülmüş soma veya referans konumudur. Sadece seçili ve gerçek bağlantıları doğrulanan alt devre LIF modeliyle simüle edilir.</p><p>LC10 görsel hücreleri → AOTU → merkezî kompleks → aşağı yönlü nöronlar · {assets?.circuit.edges.length.toLocaleString("tr-TR") ?? "—"} gerçek bağlantı. Karar izi bahis kilitlendikten sonra oynatılır.</p>{showSummary && neural && <p>Bu turun kararı: <b>{(neural.side ?? neural.readout.side ?? (decision?.action === "dive" ? "long" : "short")).toUpperCase()}</b> · {neural.activeNeuronCount} nöron ateşledi · sol/sağ motor çıktısı {(neural.readout.leftSteeringHz ?? 0).toFixed(1)} / {(neural.readout.rightSteeringHz ?? 0).toFixed(1)} Hz{neural.readout.usedSensoryFallback ? " · motor eşitliği, duyusal kanal beraberliği çözdü" : ""}.</p>}<a href="https://github.com/flyconnectome/flywire_annotations" target="_blank" rel="noreferrer">FlyWire kaynak verisi ↗</a></details>
+      <p className="neural-source-note">{assets ? formatCount(assets.cloud.points.length) : "139,248"} cell locations · {assets ? formatCount(assets.circuit.neurons.length) : "—"} decision-circuit neurons</p>
+      <details className="neural-data-details"><summary>Circuit details</summary><p>Each point is a measured soma or reference location from FlyWire annotations. Only the selected subcircuit, whose real connections are verified, is simulated with an LIF model.</p><p>LC10 visual neurons → AOTU → central complex → descending neurons · {assets ? formatCount(assets.circuit.edges.length) : "—"} verified connections. Decision replay starts after betting closes.</p>{showSummary && neural && <p>Round decision: <b>{(neural.side ?? neural.readout.side ?? (decision?.action === "dive" ? "long" : "short")).toUpperCase()}</b> · {neural.activeNeuronCount} neurons fired · left/right motor output {(neural.readout.leftSteeringHz ?? 0).toFixed(1)} / {(neural.readout.rightSteeringHz ?? 0).toFixed(1)} Hz{neural.readout.usedSensoryFallback ? " · sensory input broke a motor-output tie" : ""}.</p>}<a href="https://github.com/flyconnectome/flywire_annotations" target="_blank" rel="noreferrer">FlyWire source data ↗</a></details>
     </section>
   );
 }

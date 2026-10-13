@@ -404,5 +404,5 @@ export default function BrainCloudCanvas(props: Props) {
 
   useEffect(() => { rendererRef.current?.acceptFrame(props.frame); }, [props.frame]);
 
-  return <canvas ref={canvasRef} className="brain-cloud-canvas" tabIndex={0} role="img" aria-label="Döndürülebilir üç boyutlu sinek beyni. Sürükleyerek veya ok tuşlarıyla döndürün, tekerlek veya artı eksi ile yakınlaştırın; devredeki bir nörona tıklayarak seçin." />;
+  return <canvas ref={canvasRef} className="brain-cloud-canvas" tabIndex={0} role="img" aria-label="Rotatable 3D fruit fly brain. Drag or use the arrow keys to rotate, use the wheel or plus and minus to zoom, and select a neuron in the circuit." />;
 }

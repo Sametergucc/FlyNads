@@ -1,6 +1,8 @@
 import { BrowserProvider, Contract, formatEther, JsonRpcProvider, parseEther, type Log, type Provider, type Signer } from "ethers";
 
 const MONAD_TESTNET_CHAIN_ID = 10143;
+// Leave time for the wallet prompt, RPC propagation, and Monad inclusion.
+const BET_SUBMISSION_BUFFER_SECONDS = 4;
 const ABI = [
   "function placeBet(uint256 roundId, bool gains) payable",
   "function claim(uint256 roundId)",
@@ -320,7 +322,20 @@ export async function placeChainBet(session: WalletSession, gains: boolean, amou
   if (Number(network.chainId) !== MONAD_TESTNET_CHAIN_ID) throw new Error("Cüzdan Monad Testnet üzerinde değil; ağ değiştiyse yeniden bağlanın.");
   const signer = await session.provider.getSigner();
   const contract = getContract(session.provider, signer);
-  const tx = await contract.placeBet(roundId, gains, { value: parseEther(amount) });
+  const [round, block] = await Promise.all([
+    readWithRetry(() => contract.rounds(roundId)),
+    readWithRetry(() => session.provider.getBlock("latest")),
+  ]);
+  if (!block) throw new Error("Monad tur zamanı okunamadı; bahis gönderilmedi.");
+  const secondsLeft = Number(round.closesAt) - block.timestamp;
+  if (Number(round.status) !== 1 || secondsLeft <= BET_SUBMISSION_BUFFER_SECONDS) {
+    throw new Error("Bahis penceresi kapanmış veya kapanmak üzere. İşlem gönderilmedi; sonraki turu bekleyin.");
+  }
+  const overrides = { value: parseEther(amount) };
+  // Run the exact contract call before opening the wallet's send flow. This
+  // catches stale round IDs and already-closed rounds without spending gas.
+  await contract.placeBet.staticCall(roundId, gains, overrides);
+  const tx = await contract.placeBet(roundId, gains, overrides);
   return tx.wait();
 }
 

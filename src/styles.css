@@ -707,3 +707,7 @@ body { background: radial-gradient(ellipse at 47% -32%, #6cddcb12, transparent 4
 @media (prefers-reduced-motion: reduce) {
   .btc-live-dot.btc-live { animation: none; }
 }
+.btc-fly-halo { fill: #07100f; fill-opacity: .96; stroke: #72dfcc; stroke-opacity: .46; stroke-width: .8; }
+.btc-fly-wing { fill: #9bded0; fill-opacity: .52; stroke: #b9f4e9; stroke-opacity: .7; stroke-width: .55; }
+.btc-fly-body { fill: #72dfcc; }
+.btc-fly-eye { fill: #effffb; }
